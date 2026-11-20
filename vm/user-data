@@ -1,0 +1,37 @@
+#cloud-config
+users:
+  - name: lixx
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+ssh_pwauth: false
+chpasswd:
+  expire: false
+  users:
+    - {name: lixx, password: lixx, type: text}
+
+write_files:
+  - path: /etc/profile.d/lixx-preview.sh
+    content: |
+      if [ -f /run/lixx-preview/pending ] && [ "$(id -un)" = lixx ] && [ "$(tty)" = /dev/tty1 ]; then
+          mv /run/lixx-preview/pending /run/lixx-preview/session
+          /bin/bash /run/lixx-preview/session
+      fi
+
+runcmd:
+  - |
+    set -eu
+    install -d /run/lixx-seed
+    mount -o ro /dev/disk/by-label/cidata /run/lixx-seed
+    install -d -o lixx -g lixx /home/lixx/lixx /run/lixx-preview
+    runuser -u lixx -- tar -xf /run/lixx-seed/checkout.tar -C /home/lixx/lixx
+    install -m 0644 /run/lixx-seed/first-login /run/lixx-preview/pending
+    umount /run/lixx-seed
+    install -d /etc/systemd/system/getty@tty1.service.d
+    cat > /etc/systemd/system/getty@tty1.service.d/lixx-preview.conf <<'UNIT'
+    [Service]
+    ExecStart=
+    ExecStart=-/sbin/agetty --autologin lixx --noclear %I $TERM
+    UNIT
+    systemctl daemon-reload
+    systemctl restart getty@tty1.service

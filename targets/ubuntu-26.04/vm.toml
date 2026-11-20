@@ -1,0 +1,3 @@
+# Ubuntu's release-20261108 SHA256SUMS, signed by the UEC Image Automatic Signing Key.
+image = "https://cloud-images.ubuntu.com/releases/resolute/release-20261108/ubuntu-26.04-server-cloudimg-amd64.img"
+sha256 = "7b90593f5532b49b7e3fe3d2743f0d1f0d822e5b07cebcd8e00c0df8069ecab9"

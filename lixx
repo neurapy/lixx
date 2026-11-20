@@ -62,15 +62,37 @@ class Destination:
     link: str | None = None
 
 
-def source_files(directory):
+def tree_entries(directory):
     for entry in directory.iterdir():
         mode = entry.lstat().st_mode
         if stat.S_ISDIR(mode):
-            yield from source_files(entry)
+            yield entry, True
+            yield from tree_entries(entry)
         elif stat.S_ISREG(mode):
-            yield entry
+            yield entry, False
         else:
             raise InstallError(f"Expected a regular asset or directory at {entry}")
+
+
+def tree_files(trees, scope):
+    files = {}
+    directories = set()
+    for tree in trees:
+        directory = tree / scope
+        if directory.resolve() != directory:
+            raise InstallError(f"Asset directory points through a symlink: {directory}")
+        if not directory.exists():
+            continue
+        for source, is_directory in tree_entries(directory):
+            relative = source.relative_to(directory)
+            if is_directory:
+                directories.add(relative)
+            elif relative != Path(".gitkeep"):
+                files[relative] = source
+    conflicts = directories.intersection(files)
+    if conflicts:
+        raise InstallError(f"Tree path is both a file and a directory: {scope}/{min(conflicts)}")
+    return dict(sorted(files.items()))
 
 
 def destination_path(requested, checkout):
@@ -112,10 +134,8 @@ def stage_file(source, staged, destination, *, allow_executable=True):
     return Asset(staged, destination, contents, executable)
 
 
-def stage_assets(checkout, home):
-    source = checkout / "static_assets" / "home"
-    if source.resolve() != source:
-        raise InstallError(f"Asset directory points through a symlink: {source}")
+def stage_home(checkout, home, trees):
+    files = tree_files(trees, "home")
     config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
     if not config.is_absolute():
         config = home / ".config"
@@ -124,8 +144,7 @@ def stage_assets(checkout, home):
         data = home / ".local/share"
     zsh = Path(os.environ.get("ZDOTDIR") or config / "zsh")
     destinations = {}
-    for path in sorted(source_files(source)):
-        relative = path.relative_to(source)
+    for relative in files:
         if relative.is_relative_to(".config/zsh"):
             destinations[relative] = zsh / relative.relative_to(".config/zsh")
         elif relative.is_relative_to(".config"):
@@ -137,7 +156,7 @@ def stage_assets(checkout, home):
     check_layout([destination_path(path, checkout) for path in destinations.values()])
 
     staged_home = staging_directory(checkout, home, "home")
-    return [stage_file(source / relative, staged_home / relative, destination)
+    return [stage_file(files[relative], staged_home / relative, destination)
             for relative, destination in destinations.items()]
 
 
@@ -201,8 +220,7 @@ def review_file(asset, installed):
         print("Enter yes, skip, or cancel.")
 
 
-def review(assets, checkout):
-    decisions = {}
+def review(assets, checkout, decisions):
     while True:
         stable = True
         paths = []
@@ -224,7 +242,7 @@ def review(assets, checkout):
                 decisions.pop(asset, None)
         check_layout(paths)
         if stable:
-            return [(asset, state) for asset, (state, answer) in decisions.items() if answer == "yes"]
+            return [(asset, decisions[asset][0]) for asset in assets if decisions[asset][1] == "yes"]
 
 
 def install_file(asset, reviewed, checkout, create_mode):
@@ -251,16 +269,27 @@ def install_file(asset, reviewed, checkout, create_mode):
 
 
 PROFILE = Path("targets/ubuntu-26.04")
-APT_DIR = Path("/etc/apt")
+SYSTEM_ROOT = Path("/")
 
 
-def check_system():
-    release = platform.freedesktop_os_release()
-    arch = subprocess.check_output(["dpkg", "--print-architecture"], text=True).strip()
-    if (release.get("ID"), release.get("VERSION_ID"), arch) != ("ubuntu", "26.04", "amd64"):
+def host_profile(checkout):
+    try:
+        release = platform.freedesktop_os_release()
+    except OSError:
+        return None
+    targets = checkout / "targets"
+    profile = targets / f"{release.get('ID', '')}-{release.get('VERSION_ID', '')}"
+    if profile.parent == targets and profile.is_dir():
+        return profile
+    return None
+
+
+def check_system(profile):
+    if (profile is None or profile.name != PROFILE.name
+            or subprocess.check_output(["dpkg", "--print-architecture"], text=True).strip() != "amd64"):
         raise InstallError("System installation requires Ubuntu 26.04 LTS on amd64.")
     if os.geteuid() == 0:
-        raise InstallError("Run ./lixx install as the desktop user. Lixx uses sudo for APT.")
+        raise InstallError("Run ./lixx install as the desktop user. Lixx uses sudo for system files and APT.")
 
 
 def package_requirements(profile):
@@ -282,16 +311,20 @@ def apt_indexes(source=None):
     return dict(line.split(" ", 1) for line in output.splitlines() if line)
 
 
-def stage_apt(checkout, home, profile):
-    source_dir = profile / "etc/apt"
-    staged = staging_directory(checkout, home, "rootfs") / "etc/apt"
+def stage_root(checkout, home, trees):
+    files = tree_files(trees, "root")
+    staged = staging_directory(checkout, home, "root")
     suffixes = {"sources.list.d": ".sources", "preferences.d": ".pref"}
     active = None
-    assets = []
-    for source in sorted(source_files(source_dir)):
-        relative = source.relative_to(source_dir)
-        destination = APT_DIR / relative
-        if source.suffix != suffixes.get(str(relative.parent)):
+    apt_assets = []
+    other_assets = []
+    for relative, source in files.items():
+        destination = SYSTEM_ROOT / relative
+        if not relative.is_relative_to("etc/apt"):
+            other_assets.append(stage_file(source, staged / relative, destination))
+            continue
+        apt_path = relative.relative_to("etc/apt")
+        if source.suffix != suffixes.get(str(apt_path.parent)):
             raise InstallError(f"Unexpected APT profile file: {source}")
         if source.suffix == ".sources" and not os.path.lexists(destination):
             if active is None:
@@ -301,21 +334,25 @@ def stage_apt(checkout, home, profile):
                 entries = sorted({active[uri] for uri in requested})
                 print(f"Using existing APT source: {', '.join(entries)}")
                 continue
-        assets.append(stage_file(source, staged / relative, destination, allow_executable=False))
-    return assets
+        apt_assets.append(stage_file(source, staged / relative, destination, allow_executable=False))
+    return apt_assets, other_assets
 
 
-def install_apt_file(asset, reviewed, checkout):
+def install_root_file(asset, reviewed, checkout):
     path = reviewed.path
-    if path != asset.destination:
-        raise InstallError(f"APT directory must be at {asset.destination.parent}")
+    if path != asset.destination or destination_path(asset.destination, checkout) != path:
+        raise InstallError(f"System directory must be at {asset.destination.parent}")
     payload = io.BytesIO()
     if read_contents(asset.staged, payload) != asset.contents:
         raise InstallError(f"Staged file changed after review: {asset.staged}. Rerun lixx.")
+    if not path.parent.is_dir():
+        subprocess.run(["sudo", "mkdir", "-p", "--", path.parent], check=True)
     temporary = subprocess.check_output(["sudo", "mktemp", "--", path.parent / ".lixx-XXXXXXXX"],
                                         text=True).strip()
     try:
-        mode = reviewed.mode if reviewed.mode is not None else 0o644
+        mode = reviewed.mode if reviewed.mode is not None else (0o755 if asset.executable else 0o644)
+        if asset.executable:
+            mode |= stat.S_IXUSR
         subprocess.run(["sudo", "tee", "--", temporary], input=payload.getvalue(),
                        stdout=subprocess.DEVNULL, check=True)
         subprocess.run(["sudo", "chmod", "--", f"{mode:o}", temporary], check=True)
@@ -339,8 +376,9 @@ def run(command, completed):
     checkout = Path(__file__).resolve().parent
     home = Path.home().resolve()
     full_install = command == "install"
+    profile = host_profile(checkout)
     if full_install:
-        check_system()
+        check_system(profile)
     with ExitStack() as locks:
         # Directory locks also coordinate different checkout paths targeting
         # one account. A fixed order avoids deadlocks and needs no lock files.
@@ -348,27 +386,35 @@ def run(command, completed):
             fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
             locks.callback(os.close, fd)
             fcntl.flock(fd, fcntl.LOCK_EX)
-        home_assets = stage_assets(checkout, home)
-        apt_assets = []
+        shared_tree = checkout / "targets/all/trees"
+        if not shared_tree.is_dir():
+            raise InstallError(f"Missing shared asset tree: {shared_tree}")
+        trees = [shared_tree]
+        if profile is not None:
+            trees.append(profile / "tree")
+        home_assets = stage_home(checkout, home, trees)
+        system_assets = []
+        decisions = {}
         if full_install:
-            profile = checkout / PROFILE
             packages = package_requirements(profile)
-            apt_assets = stage_apt(checkout, home, profile)
-        pending = review(apt_assets + home_assets, checkout)
-        if full_install:
+            apt_assets, system_assets = stage_root(checkout, home, trees)
+            pending = review(apt_assets + system_assets + home_assets, checkout, decisions)
             for asset, reviewed in pending:
                 if asset in apt_assets:
-                    install_apt_file(asset, reviewed, checkout)
+                    install_root_file(asset, reviewed, checkout)
                     completed.append(reviewed.path)
                     print(f"Installed {reviewed.path}", flush=True)
             install_packages(packages)
+        # Packages can create or change a reviewed configuration file.
+        pending = review(system_assets + home_assets, checkout, decisions)
         mask = os.umask(0o077)
         os.umask(mask)
         for asset, reviewed in pending:
-            if asset in apt_assets:
-                continue
-            create_mode = (0o777 if asset.executable else 0o666) & ~mask
-            install_file(asset, reviewed, checkout, create_mode)
+            if asset in system_assets:
+                install_root_file(asset, reviewed, checkout)
+            else:
+                create_mode = (0o777 if asset.executable else 0o666) & ~mask
+                install_file(asset, reviewed, checkout, create_mode)
             completed.append(reviewed.path)
             print(f"Installed {reviewed.path}", flush=True)
         print(f"Files installed: {len(completed)}")

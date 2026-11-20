@@ -1,0 +1,16 @@
+#!/bin/bash
+# Runs as the preview user on the guest's real tty1, once per fresh installation.
+yes yes | "$HOME/lixx/lixx" install 2>&1 | tee /run/lixx-preview/install.log
+status=${PIPESTATUS[1]}
+printf '\nLIXX_INSTALL_EXIT=%d\n' "$status" | sudo tee /dev/ttyS0 >/dev/null
+if (( status != 0 )); then
+    echo "Installation failed. See /run/lixx-preview/install.log or retry from ~/lixx."
+    exit "$status"
+fi
+uwsm start -- hyprland.desktop
+status=$?
+if (( status != 0 )); then
+    printf '\nLIXX_DESKTOP_EXIT=%d\n' "$status" | sudo tee /dev/ttyS0 >/dev/null
+    echo "Desktop startup exited with status $status. Inspect the session with journalctl --user -b."
+fi
+exit "$status"

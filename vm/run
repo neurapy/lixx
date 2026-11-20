@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""Open a disposable VM and install the current Lixx working tree."""
+
+import argparse
+import fcntl
+import hashlib
+import os
+from pathlib import Path
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tarfile
+import tempfile
+import tomllib
+from urllib.parse import urlsplit
+import uuid
+
+
+ROOT = Path(__file__).resolve().parents[1]
+LOCAL = Path("vm/.local")
+
+
+def digest(path):
+    with path.open("rb") as file:
+        return hashlib.file_digest(file, "sha256").hexdigest()
+
+
+def base_image(profile, state):
+    url, checksum = profile["image"], profile["sha256"]
+    if urlsplit(url).scheme != "https" or not re.fullmatch("[0-9a-f]{64}", checksum):
+        raise ValueError("The VM profile needs an HTTPS image URL and a SHA-256 digest.")
+    images = state / "images"
+    images.mkdir(parents=True, exist_ok=True)
+    cached = images / (checksum + ".qcow2")
+    with (images / ".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if cached.is_file() and digest(cached) == checksum:
+            print(f"Using verified base image {cached}", flush=True)
+            return cached
+        print(f"Downloading {url}", flush=True)
+        with tempfile.TemporaryDirectory(dir=images) as temporary:
+            download = Path(temporary) / "image"
+            subprocess.run(["curl", "--fail", "--location", "--retry", "2", "--output", download, url],
+                           check=True)
+            if digest(download) != checksum:
+                raise ValueError("Downloaded image does not match the target's SHA-256 digest.")
+            download.chmod(0o444)
+            os.replace(download, cached)
+    return cached
+
+
+def snapshot(checkout, output):
+    listing = subprocess.check_output(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--deduplicate", "-z",
+         "--", ".", f":(top,exclude){LOCAL}"],
+        cwd=checkout,
+    )
+    with tarfile.open(output, "w", dereference=False) as archive:
+        for raw in listing.split(b"\0"):
+            if not raw:
+                continue
+            name = os.fsdecode(raw)
+            path = checkout / name
+            # A tracked file may have been deleted or its parent replaced by a symlink.
+            if path.parent.resolve() == path.parent and (path.is_file() or path.is_symlink()):
+                archive.add(path, arcname=name, recursive=False)
+
+
+def qemu_tools(state):
+    system = shutil.which("qemu-system-x86_64")
+    image = shutil.which("qemu-img")
+    if system and image:
+        return [system], image, os.environ.copy()
+    prefix = state / "tools/usr"
+    system, image = prefix / "bin/qemu-system-x86_64", prefix / "bin/qemu-img"
+    if not (system.is_file() and image.is_file()):
+        raise ValueError("Install qemu-system-x86, qemu-utils, qemu-system-gui and "
+                         "qemu-system-modules-opengl on the development host.")
+    lib = prefix / "lib/x86_64-linux-gnu"
+    env = os.environ.copy()
+    env["LD_LIBRARY_PATH"] = os.pathsep.join(filter(None, (str(lib), env.get("LD_LIBRARY_PATH"))))
+    env["QEMU_MODULE_DIR"] = str(lib / "qemu")
+    return [system, "-L", prefix / "share/qemu", "-bios", prefix / "share/seabios/bios-256k.bin"], image, env
+
+
+def preview(target):
+    if not (os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")):
+        raise ValueError("Run vm/run in a graphical session to open the VM window.")
+    if not shutil.which("xorriso"):
+        raise ValueError("Install xorriso on the development host to create the guest's seed ISO.")
+    state = ROOT / LOCAL
+    qemu, qemu_img, env = qemu_tools(state)
+    state.mkdir(mode=0o700, exist_ok=True)
+    with (ROOT / "targets" / target / "vm.toml").open("rb") as file:
+        base = base_image(tomllib.load(file), state)
+    runs = state / "runs"
+    runs.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="run-", dir=runs) as temporary:
+        run = Path(temporary)
+        print(f"Preparing a fresh {target} guest from {ROOT}", flush=True)
+        snapshot(ROOT, run / "checkout.tar")
+        for name in ("user-data", "first-login"):
+            shutil.copyfile(ROOT / "vm" / name, run / name)
+        (run / "meta-data").write_text(f"instance-id: lixx-{uuid.uuid4()}\nlocal-hostname: lixx-preview\n")
+        subprocess.run(["xorriso", "-as", "mkisofs", "-quiet", "-V", "cidata", "-J", "-r", "-o",
+                        "seed.iso", "meta-data", "user-data", "first-login", "checkout.tar"], cwd=run, check=True)
+        subprocess.run([qemu_img, "create", "-q", "-f", "qcow2", "-F", "qcow2", "-b", base,
+                        "disk.qcow2", "24G"], cwd=run, env=env, check=True)
+        kvm = os.uname().machine == "x86_64" and os.access("/dev/kvm", os.R_OK | os.W_OK)
+        accel = ["-accel", "kvm", "-cpu", "host"] if kvm else ["-accel", "tcg", "-cpu", "max"]
+        if not kvm:
+            print("Using QEMU software emulation. This install may take longer.", flush=True)
+        print("The guest will install Lixx and open Hyprland. Guest login and password are both lixx.\n"
+              "Close the QEMU window to discard this run.", flush=True)
+        subprocess.run([*qemu, "-name", f"Lixx preview ({target})", "-machine", "q35", *accel,
+                        "-m", "4G", "-smp", "4", "-nodefaults",
+                        "-drive", "file=disk.qcow2,format=qcow2,if=virtio",
+                        "-drive", "file=seed.iso,format=raw,media=cdrom,readonly=on",
+                        "-netdev", "user,id=net", "-device", "virtio-net-pci,netdev=net,romfile=",
+                        "-device", "virtio-vga-gl", "-display", "gtk,gl=on",
+                        "-device", "qemu-xhci", "-device", "usb-kbd", "-device", "usb-tablet",
+                        "-audiodev", "pipewire,id=sound", "-device", "ich9-intel-hda",
+                        "-device", "hda-duplex,audiodev=sound",
+                        "-chardev", "pty,id=console,logfile=console.log", "-serial", "chardev:console"],
+                       cwd=run, env=env, check=True)
+        check_guest_status(run / "console.log")
+
+
+def check_guest_status(log):
+    installed = False
+    with log.open("rb") as console:
+        for line in console:
+            result = re.fullmatch(rb"LIXX_(INSTALL|DESKTOP)_EXIT=(\d+)", line.strip())
+            if not result:
+                continue
+            status = int(result[2])
+            if status:
+                raise ValueError(f"The guest {result[1].decode().lower()} exited with status {status}.")
+            if result[1] == b"INSTALL":
+                installed = True
+    if not installed:
+        raise ValueError("Preview closed before the guest installer finished.")
+
+
+def main():
+    targets = sorted(path.parent.name for path in (ROOT / "targets").glob("*/vm.toml"))
+    parser = argparse.ArgumentParser(prog="vm/run", description=__doc__)
+    parser.add_argument("target", nargs="?", choices=targets,
+                        default=targets[0] if len(targets) == 1 else None,
+                        help="guest installer target (defaults to the sole available target)")
+    args = parser.parse_args()
+    if not args.target:
+        parser.error("select a target with a VM profile")
+    try:
+        preview(args.target)
+    except KeyboardInterrupt:
+        return 130
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
+        print(f"vm/run: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
+    sys.exit(main())

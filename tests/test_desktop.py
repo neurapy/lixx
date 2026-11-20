@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 
-BIN = Path(__file__).resolve().parents[1] / "static_assets/home/.local/bin"
+BIN = Path(__file__).resolve().parents[1] / "targets/all/trees/home/.local/bin"
 
 
 class DesktopTests(unittest.TestCase):

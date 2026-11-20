@@ -14,6 +14,7 @@ from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[1]
+SHARED_HOME = Path("targets/all/trees/home")
 OPTIONS = Path(".config/zsh/options.zsh")
 PROMPT = b"Replace? [yes/skip/cancel] "
 
@@ -33,9 +34,9 @@ class InstallerTests(unittest.TestCase):
         self.home.mkdir()
         self.checkout.mkdir()
         shutil.copy2(REPO / "lixx", self.checkout)
-        self.assets = self.checkout / "static_assets/home"
+        self.assets = self.checkout / SHARED_HOME
         (self.assets / OPTIONS).parent.mkdir(parents=True)
-        shutil.copy2(REPO / "static_assets/home" / OPTIONS, self.assets / OPTIONS)
+        shutil.copy2(REPO / SHARED_HOME / OPTIONS, self.assets / OPTIONS)
         self.target = self.home / OPTIONS
         self.env = {
             "HOME": str(self.home), "PATH": os.defpath, "LC_ALL": "C",
@@ -116,7 +117,7 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("Files installed: 0", self.cli().stdout)
 
     def test_dirty_checkout_diff_skip_then_yes_preserves_permissions(self):
-        for args in (["init", "-q"], ["add", "static_assets"],
+        for args in (["init", "-q"], ["add", "targets"],
                      ["-c", "user.name=Fixture", "-c", "user.email=test@invalid",
                       "commit", "-qm", "original"]):
             subprocess.run(["git", *args], cwd=self.checkout, env=self.env, check=True)
@@ -167,7 +168,7 @@ class InstallerTests(unittest.TestCase):
 
     def test_xdg_zdotdir_and_zsh_after_checkout_move(self):
         for relative in (".zshenv", ".config/zsh/.zshrc"):
-            shutil.copy2(REPO / "static_assets/home" / relative, self.assets / relative)
+            shutil.copy2(REPO / SHARED_HOME / relative, self.assets / relative)
         config = self.root / "custom config"
         self.env["XDG_CONFIG_HOME"] = str(config)
         self.assertEqual(self.cli().returncode, 0)
