@@ -4,7 +4,6 @@
 import argparse
 import fcntl
 import hashlib
-import io
 import os
 import platform
 import shutil
@@ -311,8 +310,7 @@ def apt_indexes(source=None):
     return dict(line.split(" ", 1) for line in output.splitlines() if line)
 
 
-def stage_root(checkout, home, trees):
-    files = tree_files(trees, "root")
+def stage_root(checkout, home, files):
     staged = staging_directory(checkout, home, "root")
     suffixes = {"sources.list.d": ".sources", "preferences.d": ".pref"}
     active = None
@@ -342,9 +340,6 @@ def install_root_file(asset, reviewed, checkout):
     path = reviewed.path
     if path != asset.destination or destination_path(asset.destination, checkout) != path:
         raise InstallError(f"System directory must be at {asset.destination.parent}")
-    payload = io.BytesIO()
-    if read_contents(asset.staged, payload) != asset.contents:
-        raise InstallError(f"Staged file changed after review: {asset.staged}. Rerun lixx.")
     if not path.parent.is_dir():
         subprocess.run(["sudo", "mkdir", "-p", "--", path.parent], check=True)
     temporary = subprocess.check_output(["sudo", "mktemp", "--", path.parent / ".lixx-XXXXXXXX"],
@@ -353,8 +348,14 @@ def install_root_file(asset, reviewed, checkout):
         mode = reviewed.mode if reviewed.mode is not None else (0o755 if asset.executable else 0o644)
         if asset.executable:
             mode |= stat.S_IXUSR
-        subprocess.run(["sudo", "tee", "--", temporary], input=payload.getvalue(),
-                       stdout=subprocess.DEVNULL, check=True)
+        with subprocess.Popen(["sudo", "tee", "--", temporary], stdin=subprocess.PIPE,
+                              stdout=subprocess.DEVNULL) as writer:
+            with writer.stdin:
+                contents = read_contents(asset.staged, writer.stdin)
+            if writer.wait():
+                raise subprocess.CalledProcessError(writer.returncode, writer.args)
+        if contents != asset.contents:
+            raise InstallError(f"Staged file changed after review: {asset.staged}. Rerun lixx.")
         subprocess.run(["sudo", "chmod", "--", f"{mode:o}", temporary], check=True)
         if inspect_destination(asset, checkout) != reviewed:
             raise InstallError(f"Destination changed after review: {path}. Rerun lixx.")
@@ -392,12 +393,19 @@ def run(command, completed):
         trees = [shared_tree]
         if profile is not None:
             trees.append(profile / "tree")
+        if full_install:
+            root_files = tree_files(trees, "root")
+            # Validate privileged destinations before rebuilding either staging directory.
+            for relative in root_files:
+                requested = SYSTEM_ROOT / relative
+                if destination_path(requested, checkout) != requested:
+                    raise InstallError(f"System directory must be at {requested.parent}")
         home_assets = stage_home(checkout, home, trees)
         system_assets = []
         decisions = {}
         if full_install:
             packages = package_requirements(profile)
-            apt_assets, system_assets = stage_root(checkout, home, trees)
+            apt_assets, system_assets = stage_root(checkout, home, root_files)
             pending = review(apt_assets + system_assets + home_assets, checkout, decisions)
             for asset, reviewed in pending:
                 if asset in apt_assets:
