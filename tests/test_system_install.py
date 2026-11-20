@@ -47,6 +47,9 @@ class SystemInstallTests(unittest.TestCase):
             '#!/usr/bin/python3\nimport json, os, sys\n'
             'with open(os.environ["TEST_APT_LOG"], "a") as log:\n'
             '    print(json.dumps(sys.argv[1:]), file=log)\n'
+            'if "--with-source" in sys.argv:\n'
+            '    archive = sys.argv[sys.argv.index("--with-source") + 1]\n'
+            '    assert os.stat(archive).st_mode & 0o004 and os.stat(os.path.dirname(archive)).st_mode & 0o001\n'
             'if "indextargets" in sys.argv:\n'
             '    if any(arg.startswith("Dir::Etc::sourcelist=") for arg in sys.argv):\n'
             '        print("https://example.invalid/dists/resolute/main/binary-amd64/Packages profile.sources:1")\n'
@@ -79,7 +82,7 @@ class SystemInstallTests(unittest.TestCase):
 
     def test_clean_install_and_rerun(self):
         completed = []
-        lixx.run("install", completed)
+        lixx.install(completed)
         self.assertEqual(completed, [self.pref, self.source, self.home_file])
         for file in (self.pref, self.source):
             source = self.target_tree / "root" / file.relative_to(self.system)
@@ -91,7 +94,7 @@ class SystemInstallTests(unittest.TestCase):
         ])
         before = [file.stat().st_ino for file in completed]
         second = []
-        lixx.run("install", second)
+        lixx.install(second)
         self.assertEqual(second, [])
         self.assertEqual([file.stat().st_ino for file in completed], before)
 
@@ -99,11 +102,35 @@ class SystemInstallTests(unittest.TestCase):
         self.source.write_text("locally edited source\n")
         self.home_file.write_text("locally edited config\n")
         with patch("builtins.input", side_effect=["yes", "cancel"]), self.assertRaises(lixx.Cancelled):
-            lixx.run("install", [])
+            lixx.install([])
         self.assertFalse(self.pref.exists())
         self.assertFalse(self.log.exists())
         self.assertEqual(self.source.read_text(), "locally edited source\n")
         self.assertEqual(self.home_file.read_text(), "locally edited config\n")
+
+    def test_verified_deb_is_offered_to_the_same_apt_transaction(self):
+        manifest = self.profile / "packages.sha256"
+        shutil.copy2(REPO / lixx.PROFILE / manifest.name, manifest)
+        digest, url = manifest.read_text().split()
+        helper = self.home / "apt-helper"
+        helper.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/download"\n(umask 077 && touch "$3")\n')
+        helper.chmod(0o755)
+        with patch.object(lixx, "APT_HELPER", helper):
+            lixx.install([])
+        command, uri, archive, checksum = (self.home / "download").read_text().splitlines()
+        self.assertEqual((command, uri, checksum), ("download-file", url, f"SHA256:{digest}"))
+        self.assertEqual(self.apt_calls()[-1], [
+            "--no-remove", "--no-install-recommends", "--with-source", archive, "satisfy",
+            *lixx.package_requirements(self.profile),
+        ])
+        self.assertFalse(Path(archive).parent.exists())
+
+    def test_failed_package_download_stops_before_package_install(self):
+        shutil.copy2(REPO / lixx.PROFILE / "packages.sha256", self.profile)
+        with patch.object(lixx, "APT_HELPER", "/bin/false"), self.assertRaises(subprocess.CalledProcessError):
+            lixx.install([])
+        self.assertFalse(any("satisfy" in call for call in self.apt_calls()))
+        self.assertFalse(self.home_file.exists())
 
     def test_home_overlay_merges_directories_and_reviews_only_the_winner(self):
         config = Path("home/.config/example")
@@ -113,28 +140,18 @@ class SystemInstallTests(unittest.TestCase):
         write_file(self.target_tree / "root/etc/target-only", "system file")
         self.home_file.write_text("local edit\n")
         with patch("builtins.input", return_value="yes") as prompt:
-            lixx.run("update", [])
+            lixx.install([])
         prompt.assert_called_once()
         self.assertIn(b"-local edit\n+Ubuntu override", self.output.buffer.getvalue())
         self.assertNotIn(b"+installed\n", self.output.buffer.getvalue())
         self.assertEqual(self.home_file.read_text(), "Ubuntu override\n")
         self.assertEqual((self.home / ".config/example/shared").read_text(), "for everyone")
         self.assertEqual((self.home / ".config/example/extra").read_text(), "for Ubuntu")
-        self.assertFalse((self.system / "etc/target-only").exists())
-        self.assertFalse(self.log.exists())
+        self.assertEqual((self.system / "etc/target-only").read_text(), "system file")
+        self.assertTrue(any("satisfy" in call for call in self.apt_calls()))
         repeated = []
-        lixx.run("update", repeated)
+        lixx.install(repeated)
         self.assertEqual(repeated, [])
-
-    def test_update_on_unmatched_os_uses_the_shared_tree(self):
-        write_file(self.target_tree / "home/desktop-file", "Ubuntu only")
-        write_file(self.target_tree / "home/extra", "Ubuntu only")
-        with patch.object(lixx.platform, "freedesktop_os_release",
-                          return_value={"ID": "debian", "VERSION_ID": "13"}):
-            lixx.run("update", [])
-        self.assertEqual(self.home_file.read_text(), "installed\n")
-        self.assertFalse((self.home / "extra").exists())
-        self.assertFalse(self.log.exists())
 
     def test_root_overlay_installs_shared_files_target_overrides_and_executables(self):
         command = Path("usr/local/bin/example")
@@ -145,7 +162,7 @@ class SystemInstallTests(unittest.TestCase):
         write_file(self.shared / "root/etc/example/defaults", "shared defaults")
         write_file(self.shared / "root" / self.pref.relative_to(self.system), "shared preference")
         write_file(self.shared / "root/.gitkeep", "")
-        lixx.run("install", [])
+        lixx.install([])
         self.assertEqual((self.system / command).read_text(), "Ubuntu")
         self.assertEqual((self.system / command).stat().st_mode & 0o777, 0o755)
         self.assertFalse((self.system / command).samefile(override))
@@ -154,7 +171,7 @@ class SystemInstallTests(unittest.TestCase):
         self.assertEqual(self.pref.read_bytes(), target_pref.read_bytes())
         self.assertFalse((self.system / ".gitkeep").exists())
         repeated = []
-        lixx.run("install", repeated)
+        lixx.install(repeated)
         self.assertEqual(repeated, [])
 
     def test_package_created_root_config_gets_a_diff_before_replacement(self):
@@ -162,9 +179,9 @@ class SystemInstallTests(unittest.TestCase):
         write_file(self.shared / "root" / relative, "desktop config\n")
         destination = self.system / relative
         with patch.object(lixx, "install_packages",
-                          side_effect=lambda _: destination.write_text("package default\n")), \
+                          side_effect=lambda *_: destination.write_text("package default\n")), \
              patch("builtins.input", return_value="skip") as prompt:
-            lixx.run("install", [])
+            lixx.install([])
         prompt.assert_called_once()
         self.assertIn(b"-package default\n+desktop config", self.output.buffer.getvalue())
         self.assertEqual(destination.read_text(), "package default\n")
@@ -173,7 +190,7 @@ class SystemInstallTests(unittest.TestCase):
     def test_file_directory_collision_fails_before_install(self):
         (self.target_tree / "home/desktop-file").mkdir(parents=True)
         with self.assertRaisesRegex(lixx.InstallError, "both a file and a directory: home/desktop-file"):
-            lixx.run("install", [])
+            lixx.install([])
         self.assertFalse(self.home_file.exists())
         self.assertFalse(self.pref.exists())
         self.assertFalse(self.log.exists())
@@ -181,7 +198,7 @@ class SystemInstallTests(unittest.TestCase):
     def test_target_tree_symlink_is_rejected(self):
         (self.target_tree / "home").symlink_to(self.shared / "home")
         with self.assertRaisesRegex(lixx.InstallError, "symlink"):
-            lixx.run("update", [])
+            lixx.install([])
         self.assertFalse(self.home_file.exists())
 
     def test_system_destination_inside_checkout_is_rejected_before_rebuilding_home(self):
@@ -190,7 +207,7 @@ class SystemInstallTests(unittest.TestCase):
         write_file(self.shared / "root/checkout/tree/home/keep", "incoming")
         with patch.object(lixx, "SYSTEM_ROOT", self.checkout.parent), \
              self.assertRaisesRegex(lixx.InstallError, "Destination points into the checkout"):
-            lixx.run("install", [])
+            lixx.install([])
         self.assertEqual(previous.read_text(), "keep")
         self.assertFalse(self.log.exists())
 
@@ -198,9 +215,9 @@ class SystemInstallTests(unittest.TestCase):
         relative = Path("etc/example.conf")
         write_file(self.shared / "root" / relative, "approved")
         staged = self.checkout / "tree/root" / relative
-        with patch.object(lixx, "install_packages", side_effect=lambda _: staged.write_text("changed")), \
+        with patch.object(lixx, "install_packages", side_effect=lambda *_: staged.write_text("changed")), \
              self.assertRaisesRegex(lixx.InstallError, "Staged file changed"):
-            lixx.run("install", [])
+            lixx.install([])
         self.assertFalse((self.system / relative).exists())
         self.assertEqual(list(self.system.rglob(".lixx-*")), [])
 
@@ -211,14 +228,14 @@ class SystemInstallTests(unittest.TestCase):
         (profile / extra).chmod(0o755)
         (profile / "apt.conf").write_text("local configuration")
         with self.assertRaisesRegex(lixx.InstallError, "Unexpected APT profile file"):
-            lixx.run("install", [])
+            lixx.install([])
         self.assertFalse((self.apt / extra).exists())
         (profile / "apt.conf").unlink()
-        lixx.run("install", [])
+        lixx.install([])
         self.assertEqual((self.apt / extra).read_bytes(), (profile / extra).read_bytes())
         self.assertEqual((self.apt / extra).stat().st_mode & 0o777, 0o644)
         repeated = []
-        lixx.run("install", repeated)
+        lixx.install(repeated)
         self.assertEqual(repeated, [])
 
     def test_failed_apt_and_retry_with_existing_ppa(self):
@@ -227,21 +244,23 @@ class SystemInstallTests(unittest.TestCase):
         os.environ["TEST_FAIL"] = "update"
         completed = []
         with self.assertRaises(subprocess.CalledProcessError):
-            lixx.run("install", completed)
+            lixx.install(completed)
         self.assertEqual(completed, [self.pref])
         self.assertFalse(self.source.exists())
         self.assertFalse(self.home_file.exists())
         self.assertFalse(any("satisfy" in call for call in self.apt_calls()))
         del os.environ["TEST_FAIL"]
-        lixx.run("install", completed)
+        lixx.install(completed)
         self.assertEqual(completed, [self.pref, self.home_file])
 
     def test_unsupported_system_or_root_stops_before_staging(self):
-        for release, uid in (({"ID": "ubuntu", "VERSION_ID": "24.04"}, 1000),
+        for release, uid in (({"ID": "debian", "VERSION_ID": "13"}, 1000),
+                             ({"ID": "ubuntu", "VERSION_ID": "24.04"}, 1000),
                              ({"ID": "ubuntu", "VERSION_ID": "26.04"}, 0)):
             with self.subTest(release=release, uid=uid), \
                  patch.object(lixx.platform, "freedesktop_os_release", return_value=release), \
                  patch.object(lixx.os, "geteuid", return_value=uid), self.assertRaises(lixx.InstallError):
-                lixx.run("install", [])
+                lixx.install([])
         self.assertFalse((self.checkout / "tree").exists())
+        self.assertFalse(self.home_file.exists())
         self.assertFalse(self.log.exists())

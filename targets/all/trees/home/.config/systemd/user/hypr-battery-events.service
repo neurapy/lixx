@@ -1,11 +1,14 @@
 [Unit]
-Description=Lixx battery alerts from UPower
+Description=Hyprland battery alerts from UPower
 PartOf=wayland-session@hyprland.desktop.target
 After=wayland-wm@hyprland.desktop.service wayland-session-waitenv.service
 
 [Service]
 Type=exec
-ExecStart=%h/.local/bin/lixx-battery-events
+ExecStart=/usr/bin/python3 %E/hypr/battery_events.py
 Restart=on-failure
 RestartSec=2
 Slice=background.slice
+
+[Install]
+WantedBy=wayland-session@hyprland.desktop.target

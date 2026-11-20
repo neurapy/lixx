@@ -38,22 +38,35 @@ class InstallerTests(unittest.TestCase):
         (self.assets / OPTIONS).parent.mkdir(parents=True)
         shutil.copy2(REPO / SHARED_HOME / OPTIONS, self.assets / OPTIONS)
         self.target = self.home / OPTIONS
+        write(self.checkout / "targets/ubuntu-26.04/packages.txt", "zsh\n")
+        # Run the CLI as a simulated Ubuntu desktop user. The sudo stub accepts
+        # only APT calls and executes nothing on the host.
+        write(self.root / "sitecustomize.py",
+              "import os, platform\n"
+              "platform.freedesktop_os_release = lambda: {'ID': 'ubuntu', 'VERSION_ID': '26.04'}\n"
+              "os.geteuid = lambda: 1000\n")
+        bin_dir = self.root / "bin"
+        write(bin_dir / "dpkg", '#!/bin/sh\ntest "$1" = --print-architecture && echo amd64\n')
+        write(bin_dir / "sudo", '#!/bin/sh\ntest "$1" = apt-get\n')
+        for stub in bin_dir.iterdir():
+            stub.chmod(0o755)
         self.env = {
-            "HOME": str(self.home), "PATH": os.defpath, "LC_ALL": "C",
+            "HOME": str(self.home), "PATH": str(bin_dir) + ":" + os.defpath, "LC_ALL": "C",
+            "PYTHONPATH": str(self.root),
             "TERM": "xterm-256color", "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_GLOBAL": os.devnull,
         }
 
-    def cli(self, command="update", answers="", *, umask=0o022):
+    def cli(self, answers="", *, command="install", umask=0o022, stdout=subprocess.PIPE):
         return subprocess.run(
             [self.checkout / "lixx", command], input=answers, text=True,
-            capture_output=True, cwd=self.root, env=self.env, timeout=10, umask=umask,
+            stdout=stdout, stderr=subprocess.PIPE, cwd=self.root, env=self.env, timeout=10, umask=umask,
         )
 
     @contextmanager
-    def live_update(self, checkout=None, env=None):
+    def live_install(self, checkout=None, env=None):
         with subprocess.Popen(
-            [(checkout or self.checkout) / "lixx", "update"], cwd=self.root,
+            [(checkout or self.checkout) / "lixx", "install"], cwd=self.root,
             env=env or self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, bufsize=0,
         ) as process:
@@ -76,7 +89,7 @@ class InstallerTests(unittest.TestCase):
             output.extend(chunk)
         return bytes(output)
 
-    def test_new_install_staging_and_idempotent_update(self):
+    def test_new_install_staging_and_idempotent_rerun(self):
         result = self.cli(umask=0o027)
         self.assertEqual(result.returncode, 0, result.stderr)
         staged = self.checkout / "tree/home" / OPTIONS
@@ -91,7 +104,7 @@ class InstallerTests(unittest.TestCase):
         before = self.target.stat()
         stale = self.checkout / "tree/home/stale"
         write(stale, "from a previous release")
-        result = self.cli("update")
+        result = self.cli()
         self.assertEqual(result.returncode, 0, result.stderr)
         after = self.target.stat()
         self.assertEqual((after.st_ino, after.st_mode, after.st_mtime_ns),
@@ -99,6 +112,47 @@ class InstallerTests(unittest.TestCase):
         self.assertNotIn("Replace?", result.stdout)
         self.assertFalse(stale.exists())
         self.assertFalse((self.home / "stale").exists())
+
+    def test_removed_update_command_is_rejected_before_staging(self):
+        result = self.cli(command="update")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("install", result.stderr)
+        self.assertFalse((self.checkout / "tree").exists())
+
+    def test_terminal_review_uses_git_colors_and_preserves_file_details(self):
+        write(self.target, "installed line\n")
+        self.target.chmod(0o755)
+        write(self.assets / OPTIONS, "incoming line\n")
+        old, new = b"\x00old", b"\x00new"
+        (self.home / "binary").write_bytes(old)
+        (self.assets / "binary").write_bytes(new)
+        for no_color in ("", "1"):
+            with self.subTest(no_color=no_color):
+                self.env["NO_COLOR"] = no_color
+                master, slave = pty.openpty()
+                with os.fdopen(master, "rb", buffering=0) as terminal, os.fdopen(slave, "wb") as output:
+                    result = self.cli("skip\nskip\n", stdout=output)
+                    transcript = bytearray()
+                    while select.select([terminal], [], [], 0)[0]:
+                        transcript.extend(terminal.read(8192))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                reference = subprocess.run(
+                    ["git", "--no-pager", "diff", "--no-index", "--color=never" if no_color else "--color=always",
+                     "--", self.target, self.checkout / "tree/home" / OPTIONS],
+                    cwd="/", env=self.env, capture_output=True,
+                )
+                self.assertEqual(reference.returncode, 1, reference.stderr)
+                self.assertIn(reference.stdout, transcript.replace(b"\r\n", b"\n"))
+                if no_color:
+                    self.assertNotIn(b"\x1b[", transcript)
+                else:
+                    self.assertIn(b"\x1b[31m-", transcript)
+                    self.assertIn(b"\x1b[32m+", transcript)
+                self.assertIn(b"Keeping installed permissions 0755", transcript)
+                self.assertIn(b"Binary files ", transcript)
+                for data in (old, new):
+                    self.assertIn(hashlib.sha256(data).hexdigest().encode(), transcript)
+                self.assertEqual(transcript.count(PROMPT), 2)
 
     def test_executable_mode_is_reviewed_and_repaired(self):
         command = Path(".local/bin/example")
@@ -126,12 +180,13 @@ class InstallerTests(unittest.TestCase):
         write(source, "HISTSIZE=22222\n")
         write(self.target, "HISTSIZE=11111\n")
         self.target.chmod(0o600)
-        result = self.cli("update", "invalid\nskip\n")
+        result = self.cli("invalid\nskip\n")
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("\x1b[", result.stdout)
         self.assertIn("-HISTSIZE=11111\n+HISTSIZE=22222", result.stdout)
         self.assertEqual(result.stdout.count(PROMPT.decode()), 2)
         self.assertEqual(self.target.read_text(), "HISTSIZE=11111\n")
-        result = self.cli("update", "yes\n")
+        result = self.cli("yes\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.target.read_bytes(), source.read_bytes())
         self.assertEqual(stat.S_IMODE(self.target.stat().st_mode), 0o600)
@@ -158,7 +213,7 @@ class InstallerTests(unittest.TestCase):
     def test_ctrl_c_during_review(self):
         write(self.home / "review", "personal")
         write(self.assets / "review", "incoming")
-        with self.live_update() as process:
+        with self.live_install() as process:
             self.prompt(process)
             process.send_signal(signal.SIGINT)
             process.communicate(timeout=5)
@@ -167,33 +222,54 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual((self.home / "review").read_text(), "personal")
 
     def test_xdg_zdotdir_and_zsh_after_checkout_move(self):
-        for relative in (".zshenv", ".config/zsh/.zshrc"):
-            shutil.copy2(REPO / SHARED_HOME / relative, self.assets / relative)
+        shutil.copy2(REPO / SHARED_HOME / ".zshenv", self.assets)
+        shutil.copytree(REPO / SHARED_HOME / ".config/zsh", self.assets / ".config/zsh",
+                        dirs_exist_ok=True)
         config = self.root / "custom config"
         self.env["XDG_CONFIG_HOME"] = str(config)
         self.assertEqual(self.cli().returncode, 0)
         self.assertTrue((config / "zsh/options.zsh").is_file())
         self.assertFalse(self.target.exists())
 
+        result = subprocess.run(["zsh", "-ic", '[[ $skip_global_compinit == 1 && -n $functions[compdef] ]]'],
+                                env=self.env, cwd=self.home, capture_output=True, text=True, timeout=5)
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.env["ZDOTDIR"] = str(self.home)
+        self.assertEqual(self.cli().returncode, 0)
+        self.assertTrue((self.home / ".zshrc").is_file())
+
         zsh = self.root / "zsh dotfiles"
         self.env.update(ZDOTDIR=str(zsh), XDG_STATE_HOME=str(self.root / "state"))
         write(self.assets / ".config/example/settings", "test")
-        result = self.cli("update")
+        result = self.cli()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((config / "example/settings").read_text(), "test")
         self.checkout.rename(self.root / "moved checkout")
-        command = (
-            '[[ $HISTSIZE == 200000 && -o extended_glob && -o glob_dots && '
-            '$HISTFILE == "$XDG_STATE_HOME/zsh/history" && -d ${HISTFILE:h} ]]'
-        )
+        command = ('[[ $ZSH_CONFIG_DIR == "$ZDOTDIR" && '
+                   '$HISTSIZE == 200000 && -o extended_glob && -o glob_dots && '
+                   '$HISTFILE == "$XDG_STATE_HOME/zsh/history" && -d ${HISTFILE:h} && '
+                   '$path[1] == "$HOME/.local/bin" && -n $functions[compdef] ]]')
         master, slave = pty.openpty()
-        try:
-            result = subprocess.run(["zsh", "-ic", command], env=self.env, cwd=self.home,
-                                    stdin=slave, stdout=slave, stderr=slave, timeout=5)
-            self.assertEqual(result.returncode, 0)
-        finally:
-            os.close(slave)
-            os.close(master)
+        with os.fdopen(master, "rb"), os.fdopen(slave, "rb") as terminal:
+            result = subprocess.run(["zsh", "-ic", command], env=self.env, cwd=self.home, stdin=terminal,
+                                    capture_output=True, text=True, timeout=5)
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+
+        # An existing account keeps its framework, prompt and private startup modules.
+        framework = self.root / "custom framework"
+        write(zsh / "env.zsh", 'ZSH="${HOME:h}/custom framework"\nstartup=(env)\n')
+        write(framework / "oh-my-zsh.sh",
+              'startup+=(framework)\np10k() { :; }\n')
+        for relative, name in (("functions/aliases.zsh", "aliases"), ("functions/functions.zsh", "functions"),
+                               ("functions/up.zsh", "up"), (".p10k.zsh", "prompt")):
+            write(zsh / relative, f"startup+=({name})\n")
+        write(self.home / ".local/bin/env", "startup+=(local-bin)\n")
+        command = ('[[ "${(j:,:)startup}" == env,framework,aliases,functions,up,prompt,local-bin && '
+                   '$ZSH_THEME == powerlevel10k/powerlevel10k && ${plugins[(Ie)fzf-tab]} -gt 0 && '
+                   '-n $functions[__zsh_load_nvm] ]]')
+        result = subprocess.run(["zsh", "-ic", command], env=self.env, cwd=self.home,
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
 
     def test_data_home_installs_regular_font_files(self):
         relative = Path("fonts/example.ttf")
@@ -221,7 +297,7 @@ class InstallerTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(str(link), result.stdout)
                 self.assertEqual(self.target.readlink(), link)
-                result = self.cli("update", "yes\n", umask=0o077)
+                result = self.cli("yes\n", umask=0o077)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertFalse(self.target.is_symlink())
                 self.assertEqual(self.target.read_bytes(), contents)
@@ -241,7 +317,7 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse((self.home / "another").exists())
         (self.home / ".config").rename(self.home / "original")
         (self.home / ".config").symlink_to(self.checkout / "trap")
-        result = self.cli("update")
+        result = self.cli()
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("checkout", result.stderr)
         self.assertFalse((self.checkout / "trap").exists())
@@ -251,7 +327,7 @@ class InstallerTests(unittest.TestCase):
         old, new = b"\x00installed", b"\x00new"
         (self.home / "data").write_bytes(old)
         (self.assets / "data").write_bytes(new)
-        result = self.cli("update", "yes\n")
+        result = self.cli("yes\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Binary files ", result.stdout)
         for content in (old, new):
@@ -266,7 +342,7 @@ class InstallerTests(unittest.TestCase):
         source = self.assets / OPTIONS
         source.write_bytes(b"HISTSIZE=1\r\n")
         write(self.target, "HISTSIZE=1\n")
-        result = self.cli("update", "yes\n")
+        result = self.cli("yes\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("-HISTSIZE=1", result.stdout)
         self.assertEqual(self.target.read_bytes(), source.read_bytes())
@@ -274,7 +350,7 @@ class InstallerTests(unittest.TestCase):
     def test_changed_or_new_destination_is_reviewed_before_any_write(self):
         write(self.assets / "last", "incoming\n")
         write(self.home / "last", "initial\n")
-        with self.live_update() as process:
+        with self.live_install() as process:
             self.assertIn(b"-initial", self.prompt(process))
             write(self.target, "appeared during review\n")
             process.stdin.write(b"yes\n")
@@ -288,7 +364,7 @@ class InstallerTests(unittest.TestCase):
         for name in ("a", "b"):
             write(self.assets / name, "incoming\n")
             write(self.home / name, "initial\n")
-        with self.live_update() as process:
+        with self.live_install() as process:
             self.assertIn(b"-initial", self.prompt(process))
             write(self.home / "a", "edited while deciding\n")
             write(self.home / "b", "incoming\n")
@@ -321,7 +397,7 @@ class InstallerTests(unittest.TestCase):
     def test_apply_failure_reports_completed_paths_and_rerun_recovers(self):
         write(self.assets / "last", "incoming")
         write(self.home / "last", "personal")
-        with self.live_update() as process:
+        with self.live_install() as process:
             self.prompt(process)
             write(self.checkout / "tree/home/last", "different from the reviewed file")
             output, _ = process.communicate(b"yes\n", timeout=5)
@@ -331,7 +407,7 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.target.read_bytes(), (self.assets / OPTIONS).read_bytes())
         self.assertEqual((self.home / "last").read_text(), "personal")
         self.assertFalse(list(self.home.rglob(".lixx-*")))
-        self.assertEqual(self.cli("update", "yes\n").returncode, 0)
+        self.assertEqual(self.cli("yes\n").returncode, 0)
         self.assertEqual((self.home / "last").read_text(), "incoming")
 
     def test_concurrent_runs_share_checkout_or_home_lock(self):
@@ -342,9 +418,9 @@ class InstallerTests(unittest.TestCase):
         other_home.mkdir()
         runs = [(other_checkout, self.env), (self.checkout, {**self.env, "HOME": str(other_home)})]
         for checkout, env in runs:
-            with self.subTest(checkout=checkout), self.live_update() as first:
+            with self.subTest(checkout=checkout), self.live_install() as first:
                 self.prompt(first)
-                with self.live_update(checkout, env) as second:
+                with self.live_install(checkout, env) as second:
                     second.stdin.write(b"skip\n")
                     with self.assertRaises(subprocess.TimeoutExpired):
                         second.wait(timeout=0.2)

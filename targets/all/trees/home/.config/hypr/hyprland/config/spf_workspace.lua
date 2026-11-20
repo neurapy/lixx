@@ -9,7 +9,7 @@ local WORKSPACE_NAME = "spf"
 local ANCHOR_CLASS = "com.mitchellh.ghostty.spf"
 local ANCHOR_CLASS_REGEX = "^com[.]mitchellh[.]ghostty[.]spf$"
 local ANCHOR_COMMAND = table.concat({
-    "uwsm app --",
+    "uwsm-app --",
     "env -u GTK_IM_MODULE -u QT_IM_MODULE -u XMODIFIERS",
     "ghostty",
     "--class=" .. ANCHOR_CLASS,

@@ -1,11 +1,12 @@
 #!/usr/bin/python3
-"""Install the Lixx desktop or update its user files from this checkout."""
+"""Install or refresh the Lixx desktop from this checkout."""
 
 import argparse
 import fcntl
 import hashlib
 import os
 import platform
+import re
 import shutil
 import stat
 import subprocess
@@ -182,11 +183,14 @@ def show_difference(asset, installed):
         print(f"Installed symlink -> {installed.link!r}", flush=True)
     # Compare the actual bytes. Working-tree attributes and autocrlf can
     # otherwise hide a difference consisting only of line endings.
+    # Git writes to a pipe here, so choose colors for the installer's output.
+    use_color = (sys.stdout.isatty() and os.environ.get("TERM") != "dumb"
+                 and not os.environ.get("NO_COLOR"))
     command = [
         "git", "--no-pager", "-c", "core.autocrlf=false", "-c", "core.fileMode=true",
         "-c", f"core.attributesFile={os.devnull}",
-        "diff", "--no-index", "--no-ext-diff", "--no-textconv", "--color=never",
-        "--", installed.path, asset.staged,
+        "diff", "--no-index", "--no-ext-diff", "--no-textconv",
+        "--color=always" if use_color else "--color=never", "--", installed.path, asset.staged,
     ]
     diff = subprocess.run(command, cwd="/", stdout=subprocess.PIPE,
                           env={**os.environ, "LC_ALL": "C", "GIT_ATTR_NOSYSTEM": "1"})
@@ -194,11 +198,12 @@ def show_difference(asset, installed):
         raise InstallError(f"Could not display the reviewed difference for {installed.path}. Rerun lixx.")
     sys.stdout.buffer.write(diff.stdout)
     sys.stdout.buffer.flush()
+    plain_diff = re.sub(rb"\x1b\[[0-9;]*m", b"", diff.stdout) if use_color else diff.stdout
     if asset.executable and installed.mode is not None and not installed.mode & stat.S_IXUSR:
         print("Replacement requires owner execute permission.")
-    elif installed.mode is not None and b"\nold mode " in diff.stdout:
+    elif installed.mode is not None and b"\nold mode " in plain_diff:
         print(f"Keeping installed permissions {installed.mode:04o}.")
-    if b"\nBinary files " in diff.stdout:
+    if b"\nBinary files " in plain_diff:
         for label, contents in (("Installed", installed.contents), ("Incoming", asset.contents)):
             print(f"{label}: {contents.size} bytes, SHA-256 {contents.sha256}")
 
@@ -269,6 +274,7 @@ def install_file(asset, reviewed, checkout, create_mode):
 
 PROFILE = Path("targets/ubuntu-26.04")
 SYSTEM_ROOT = Path("/")
+APT_HELPER = "/usr/lib/apt/apt-helper"
 
 
 def host_profile(checkout):
@@ -365,21 +371,37 @@ def install_root_file(asset, reviewed, checkout):
         raise
 
 
-def install_packages(packages):
+def install_packages(profile, packages):
     print("Refreshing APT indexes...", flush=True)
     subprocess.run(["sudo", "apt-get", "--error-on=any", "update"], check=True)
-    print("Installing the desktop packages...", flush=True)
-    subprocess.run(["sudo", "apt-get", "--no-remove", "--no-install-recommends", "satisfy",
-                    *packages], check=True)
+    with tempfile.TemporaryDirectory(prefix="lixx-apt-", dir="/tmp") as temporary:
+        directory = Path(temporary)
+        sources = []
+        manifest = profile / "packages.sha256"
+        if manifest.is_file():
+            for line in manifest.read_text().splitlines():
+                if not line.strip() or line.lstrip().startswith("#"):
+                    continue
+                entry = re.fullmatch(r"([0-9a-f]{64})\s+(https://\S+/([^/\s]+\.deb))", line.strip())
+                if not entry:
+                    raise InstallError(f"Invalid package checksum or URL in {manifest}")
+                digest, url, filename = entry.groups()
+                archive = directory / filename
+                subprocess.run([APT_HELPER, "download-file", url, archive, f"SHA256:{digest}"], check=True)
+                archive.chmod(0o644)
+                sources.extend(["--with-source", archive])
+        # APT's _apt user must be able to read the verified archives.
+        directory.chmod(0o755)
+        print("Installing the desktop packages...", flush=True)
+        subprocess.run(["sudo", "apt-get", "--no-remove", "--no-install-recommends",
+                        *sources, "satisfy", *packages], check=True)
 
 
-def run(command, completed):
+def install(completed):
     checkout = Path(__file__).resolve().parent
     home = Path.home().resolve()
-    full_install = command == "install"
     profile = host_profile(checkout)
-    if full_install:
-        check_system(profile)
+    check_system(profile)
     with ExitStack() as locks:
         # Directory locks also coordinate different checkout paths targeting
         # one account. A fixed order avoids deadlocks and needs no lock files.
@@ -390,28 +412,24 @@ def run(command, completed):
         shared_tree = checkout / "targets/all/trees"
         if not shared_tree.is_dir():
             raise InstallError(f"Missing shared asset tree: {shared_tree}")
-        trees = [shared_tree]
-        if profile is not None:
-            trees.append(profile / "tree")
-        root_files = tree_files(trees, "root") if full_install else {}
+        trees = [shared_tree, profile / "tree"]
+        root_files = tree_files(trees, "root")
         # Validate privileged destinations before rebuilding either staging directory.
         for relative in root_files:
             requested = SYSTEM_ROOT / relative
             if destination_path(requested, checkout) != requested:
                 raise InstallError(f"System directory must be at {requested.parent}")
         home_assets = stage_home(checkout, home, trees)
-        system_assets = []
+        packages = package_requirements(profile)
+        apt_assets, system_assets = stage_root(checkout, home, root_files)
         decisions = {}
-        if full_install:
-            packages = package_requirements(profile)
-            apt_assets, system_assets = stage_root(checkout, home, root_files)
-            pending = review(apt_assets + system_assets + home_assets, checkout, decisions)
-            for asset, reviewed in pending:
-                if asset in apt_assets:
-                    install_root_file(asset, reviewed, checkout)
-                    completed.append(reviewed.path)
-                    print(f"Installed {reviewed.path}", flush=True)
-            install_packages(packages)
+        pending = review(apt_assets + system_assets + home_assets, checkout, decisions)
+        for asset, reviewed in pending:
+            if asset in apt_assets:
+                install_root_file(asset, reviewed, checkout)
+                completed.append(reviewed.path)
+                print(f"Installed {reviewed.path}", flush=True)
+        install_packages(profile, packages)
         # Packages can create or change a reviewed configuration file.
         pending = review(system_assets + home_assets, checkout, decisions)
         mask = os.umask(0o077)
@@ -425,19 +443,17 @@ def run(command, completed):
             completed.append(reviewed.path)
             print(f"Installed {reviewed.path}", flush=True)
         print(f"Files installed: {len(completed)}")
-        if full_install:
-            print("From a local TTY, start the desktop with: uwsm start -- hyprland.desktop")
-            print("Super+Return opens Ghostty. Super+Space opens the app launcher.")
+        print("From a local TTY, start the desktop with: uwsm start -- hyprland.desktop")
+        print("Super+Return opens Ghostty. Super+Space opens the app launcher.")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("install", "update"),
-                        help="install the Ubuntu desktop, or update only your user files")
-    args = parser.parse_args()
+    parser.add_argument("command", choices=("install",), metavar="install", help="apply the desktop packages and files")
+    parser.parse_args()
     completed = []
     try:
-        run(args.command, completed)
+        install(completed)
         return 0
     except (Cancelled, EOFError, KeyboardInterrupt):
         print("\nLixx cancelled.", file=sys.stderr)

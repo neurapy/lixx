@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 """Show Hyprland battery alerts in response to UPower's system D-Bus signals."""
 
 import subprocess

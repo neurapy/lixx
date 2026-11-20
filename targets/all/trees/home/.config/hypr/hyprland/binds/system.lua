@@ -1,11 +1,11 @@
 local bind = require("lib.bind")
 
-bind.exec("SUPER + SPACE", "Launch apps", bind.available("omarchy-launch-walker") and "omarchy-launch-walker" or "fuzzel --launch-prefix='uwsm app --'")
+bind.exec("SUPER + SPACE", "Launch apps", bind.available("omarchy-launch-walker") and "omarchy-launch-walker" or "fuzzel --launch-prefix='uwsm-app --'")
 bind.exec("SUPER + SHIFT + E", "End session", "uwsm stop")
 bind.optional_exec("SUPER + CTRL + E", "Emoji picker", "omarchy-launch-walker -m symbols")
 bind.optional_exec("SUPER + CTRL + C", "Capture menu", "omarchy-menu capture")
 bind.optional_exec("SUPER + CTRL + O", "Toggle menu", "omarchy-menu toggle")
-bind.exec("SUPER + ALT + SPACE", "Desktop menu", bind.available("omarchy-menu") and "omarchy-menu" or "fuzzel --launch-prefix='uwsm app --'")
+bind.exec("SUPER + ALT + SPACE", "Desktop menu", bind.available("omarchy-menu") and "omarchy-menu" or "fuzzel --launch-prefix='uwsm-app --'")
 bind.optional_exec("SUPER + ESCAPE", "System menu", "omarchy-menu system")
 bind.optional_exec("XF86PowerOff", "Power menu", "omarchy-menu system", { locked = true })
 bind.optional_exec("SUPER + SHIFT + Slash", "Show key bindings", "omarchy-menu-keybindings")

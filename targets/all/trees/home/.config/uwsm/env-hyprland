@@ -1,4 +1,4 @@
-# The Hyprland desktop entry launches start-hyprland. Portals use the desktop name.
-export XDG_CURRENT_DESKTOP=Hyprland
-export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
-export UWSM_WAIT_VARNAMES="${UWSM_WAIT_VARNAMES:+$UWSM_WAIT_VARNAMES }HYPRLAND_INSTANCE_SIGNATURE"
+# Changes require a restart to take effect.
+
+export HYPRCURSOR_SIZE=24
+export XCURSOR_SIZE=24

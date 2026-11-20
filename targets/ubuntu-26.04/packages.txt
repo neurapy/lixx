@@ -3,7 +3,7 @@
 # Compositor, its startup dialogs and the login session.
 hyprland (>= 0.57.2)
 hyprland-guiutils
-uwsm
+uwsm (>= 0.27.2)
 dbus-user-session
 libegl-mesa0
 libgl1-mesa-dri
@@ -38,9 +38,13 @@ upower
 python3-gi
 gir1.2-glib-2.0
 
+# Interactive shell, directory jumping and fuzzy history/file selection.
+zsh
+zoxide
+fzf
+
 # Programs opened from key bindings and Waybar.
 ghostty
-zsh
 fuzzel
 libnotify-bin
 brightnessctl

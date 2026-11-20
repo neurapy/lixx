@@ -14,7 +14,7 @@ local function quote(value)
     return "'" .. value:gsub("'", "'\\''") .. "'"
 end
 
-local launch = 'uwsm app -- flock --nonblock --no-fork "$XDG_RUNTIME_DIR/hyprstudy.lock" hyprstudy ' .. quote(settings)
+local launch = 'uwsm-app -- flock --nonblock --no-fork "$XDG_RUNTIME_DIR/hyprstudy.lock" hyprstudy ' .. quote(settings)
 
 hl.workspace_rule({
     workspace = "special:hyprstudy",
