@@ -393,13 +393,12 @@ def run(command, completed):
         trees = [shared_tree]
         if profile is not None:
             trees.append(profile / "tree")
-        if full_install:
-            root_files = tree_files(trees, "root")
-            # Validate privileged destinations before rebuilding either staging directory.
-            for relative in root_files:
-                requested = SYSTEM_ROOT / relative
-                if destination_path(requested, checkout) != requested:
-                    raise InstallError(f"System directory must be at {requested.parent}")
+        root_files = tree_files(trees, "root") if full_install else {}
+        # Validate privileged destinations before rebuilding either staging directory.
+        for relative in root_files:
+            requested = SYSTEM_ROOT / relative
+            if destination_path(requested, checkout) != requested:
+                raise InstallError(f"System directory must be at {requested.parent}")
         home_assets = stage_home(checkout, home, trees)
         system_assets = []
         decisions = {}

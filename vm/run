@@ -92,6 +92,8 @@ def preview(target):
         raise ValueError("Install xorriso on the development host to create the guest's seed ISO.")
     state = ROOT / LOCAL
     qemu, qemu_img, env = qemu_tools(state)
+    if env.get("WAYLAND_DISPLAY"):
+        env.setdefault("SDL_VIDEODRIVER", "wayland,x11")
     state.mkdir(mode=0o700, exist_ok=True)
     with (ROOT / "targets" / target / "vm.toml").open("rb") as file:
         base = base_image(tomllib.load(file), state)
@@ -113,14 +115,15 @@ def preview(target):
         if not kvm:
             print("Using QEMU software emulation. This install may take longer.", flush=True)
         print("The guest will install Lixx and open Hyprland. Guest login and password are both lixx.\n"
+              "Click inside to capture the mouse and keyboard. Left Ctrl+Left Alt+G releases them.\n"
               "Close the QEMU window to discard this run.", flush=True)
         subprocess.run([*qemu, "-name", f"Lixx preview ({target})", "-machine", "q35", *accel,
                         "-m", "4G", "-smp", "4", "-nodefaults",
                         "-drive", "file=disk.qcow2,format=qcow2,if=virtio",
                         "-drive", "file=seed.iso,format=raw,media=cdrom,readonly=on",
                         "-netdev", "user,id=net", "-device", "virtio-net-pci,netdev=net,romfile=",
-                        "-device", "virtio-vga-gl", "-display", "gtk,gl=on",
-                        "-device", "qemu-xhci", "-device", "usb-kbd", "-device", "usb-tablet",
+                        "-device", "virtio-vga-gl", "-display", "sdl,gl=on",
+                        "-device", "qemu-xhci", "-device", "usb-kbd", "-device", "usb-mouse",
                         "-audiodev", "pipewire,id=sound", "-device", "ich9-intel-hda",
                         "-device", "hda-duplex,audiodev=sound",
                         "-chardev", "pty,id=console,logfile=console.log", "-serial", "chardev:console"],

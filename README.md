@@ -16,11 +16,13 @@ From the development checkout, run this in a graphical Linux session.
 
 A QEMU window opens, logs into tty1, runs the real `./lixx install` as the guest user and starts Hyprland through UWSM. The guest login and lock-screen password are both `lixx`. Close the window or run `sudo poweroff` inside the guest when you're finished. If installation fails, tty1 stays open and the installer output is available at `/run/lixx-preview/install.log` inside the guest.
 
+Click inside the preview to capture the mouse and keyboard. The pointer stays in the window and **Super+Enter** opens Ghostty in the guest. Press **Left Ctrl+Left Alt+G** to release both devices. In QEMU fullscreen, press **Left Ctrl+Left Alt+F** to return to windowed mode first.
+
 Each invocation creates a fresh disk overlay over a checksum-verified Ubuntu Server image. The guest receives a snapshot of the working tree, including edited files and new, non-ignored files. The launcher discards the overlay when QEMU exits. Run the same command after an edit to see what a new install produces. The disposable guest automatically accepts file replacements and APT's installation prompt. All install writes take place in that guest.
 
 The launcher keeps its files under the checkout's gitignored `vm/.local/` directory. It caches the verified base image in `images/` and creates disposable disks in `runs/`. It uses QEMU from the host's PATH or the unpacked tools in `tools/` on this workstation. Every run resolves and installs the current package profile from the configured archives. [Ubuntu image release](https://cloud-images.ubuntu.com/releases/resolute/release-20261108/)
 
-On another Ubuntu 26.04 development host, the launcher needs Python 3.11 or newer, Git, curl, xorriso and QEMU with GTK and OpenGL support. These packages supply them.
+On another Ubuntu 26.04 development host, the launcher needs Python 3.11 or newer, Git, curl, xorriso and QEMU with SDL and OpenGL support. These packages supply them.
 
 ```sh
 sudo apt install python3 git curl xorriso qemu-system-x86 qemu-utils qemu-system-gui qemu-system-modules-opengl
@@ -32,7 +34,7 @@ The target can also be selected explicitly with `./vm/run ubuntu-26.04`. Each pr
 
 Start with **Ubuntu Server or Desktop 26.04 LTS on amd64**, an ordinary login account with sudo, and network access to Ubuntu's archives (including `universe`) and the Hyprland PPA. The installer uses Ubuntu's Python 3, Git and APT. For a clean VM, select Ubuntu Server and give it a 3D-capable virtual display. QEMU/KVM with VirtIO graphics and VirGL is the tested configuration.
 
-Log in at a local TTY in the VM window, open the Lixx checkout and run these commands as the desktop user. The first command uses sudo to configure APT, and APT shows its package transaction. The second starts the desktop on that seat. Use the same start command on subsequent logins.
+Log in at a local TTY in the VM window, open the Lixx checkout and run these commands as the desktop user. The first command uses sudo for system files and APT, which shows its package transaction. The second starts the desktop on that seat. Use the same start command on subsequent logins.
 
 ```sh
 ./lixx install
@@ -76,7 +78,9 @@ Directories merge. For example, add `targets/ubuntu-26.04/tree/home/.config/wayb
 
 `home/.config/` and `home/.local/share/` follow absolute `XDG_CONFIG_HOME` and `XDG_DATA_HOME` values. `home/.config/zsh/` follows the account's exported `ZDOTDIR` when set. The supplied `~/.zshenv` locates the installed Zsh configuration on a fresh account. Existing startup files get the same review as any other config.
 
-Each run rebuilds the merged `tree/home/` in the checkout. A full install also builds `tree/root/`. Lixx copies regular files and creates parent directories as needed. A `.gitkeep` directly inside a source `home/` or `root/` only keeps the empty directory in Git. Future builds under `programs/<name>/` can emit files into the same staging layout. For example, a native battery listener could take over the installed Python executable's path at `~/.local/bin/lixx-battery-events`.
+Each run rebuilds the merged `tree/home/` in the checkout. A full install also builds `tree/root/`. Lixx copies regular files and creates parent directories as needed. For system files, use the canonical parent path, such as `root/usr/bin/`. A `.gitkeep` directly inside a source `home/` or `root/` only keeps the empty directory in Git.
+
+Future builds under `programs/<name>/` can emit files into the same staging layout, with a proposed `install.toml` describing outputs and required modes. For example, a native battery listener could take over the installed Python executable's path at `~/.local/bin/lixx-battery-events`.
 
 Hyprland uses each output's preferred mode. It reads optional `monitors.lua` and `local.lua` from the installed Hypr config directory after the shared modules. Omarchy shortcuts, the SPF file manager workspace and HyprStudy activate when their respective tools are installed. HyprStudy also needs `hyprstudy/settings.toml` in the user's config directory.
 

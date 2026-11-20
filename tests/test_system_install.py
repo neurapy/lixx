@@ -82,7 +82,8 @@ class SystemInstallTests(unittest.TestCase):
         lixx.run("install", completed)
         self.assertEqual(completed, [self.pref, self.source, self.home_file])
         for file in (self.pref, self.source):
-            self.assertEqual(file.read_bytes(), (self.target_tree / "root" / file.relative_to(self.system)).read_bytes())
+            source = self.target_tree / "root" / file.relative_to(self.system)
+            self.assertEqual(file.read_bytes(), source.read_bytes())
             self.assertEqual(file.stat().st_mode & 0o777, 0o644)
         self.assertEqual(self.apt_calls()[-2:], [
             ["--error-on=any", "update"],
@@ -128,7 +129,8 @@ class SystemInstallTests(unittest.TestCase):
     def test_update_on_unmatched_os_uses_the_shared_tree(self):
         write_file(self.target_tree / "home/desktop-file", "Ubuntu only")
         write_file(self.target_tree / "home/extra", "Ubuntu only")
-        with patch.object(lixx.platform, "freedesktop_os_release", return_value={"ID": "debian", "VERSION_ID": "13"}):
+        with patch.object(lixx.platform, "freedesktop_os_release",
+                          return_value={"ID": "debian", "VERSION_ID": "13"}):
             lixx.run("update", [])
         self.assertEqual(self.home_file.read_text(), "installed\n")
         self.assertFalse((self.home / "extra").exists())
@@ -148,7 +150,8 @@ class SystemInstallTests(unittest.TestCase):
         self.assertEqual((self.system / command).stat().st_mode & 0o777, 0o755)
         self.assertFalse((self.system / command).samefile(override))
         self.assertEqual((self.system / "etc/example/defaults").read_text(), "shared defaults")
-        self.assertEqual(self.pref.read_bytes(), (self.target_tree / "root" / self.pref.relative_to(self.system)).read_bytes())
+        target_pref = self.target_tree / "root" / self.pref.relative_to(self.system)
+        self.assertEqual(self.pref.read_bytes(), target_pref.read_bytes())
         self.assertFalse((self.system / ".gitkeep").exists())
         repeated = []
         lixx.run("install", repeated)
@@ -158,7 +161,8 @@ class SystemInstallTests(unittest.TestCase):
         relative = Path("etc/example.conf")
         write_file(self.shared / "root" / relative, "desktop config\n")
         destination = self.system / relative
-        with patch.object(lixx, "install_packages", side_effect=lambda _: destination.write_text("package default\n")), \
+        with patch.object(lixx, "install_packages",
+                          side_effect=lambda _: destination.write_text("package default\n")), \
              patch("builtins.input", return_value="skip") as prompt:
             lixx.run("install", [])
         prompt.assert_called_once()
@@ -179,6 +183,26 @@ class SystemInstallTests(unittest.TestCase):
         with self.assertRaisesRegex(lixx.InstallError, "symlink"):
             lixx.run("update", [])
         self.assertFalse(self.home_file.exists())
+
+    def test_system_destination_inside_checkout_is_rejected_before_rebuilding_home(self):
+        previous = self.checkout / "tree/home/keep"
+        write_file(previous, "keep")
+        write_file(self.shared / "root/checkout/tree/home/keep", "incoming")
+        with patch.object(lixx, "SYSTEM_ROOT", self.checkout.parent), \
+             self.assertRaisesRegex(lixx.InstallError, "Destination points into the checkout"):
+            lixx.run("install", [])
+        self.assertEqual(previous.read_text(), "keep")
+        self.assertFalse(self.log.exists())
+
+    def test_changed_root_payload_is_discarded(self):
+        relative = Path("etc/example.conf")
+        write_file(self.shared / "root" / relative, "approved")
+        staged = self.checkout / "tree/root" / relative
+        with patch.object(lixx, "install_packages", side_effect=lambda _: staged.write_text("changed")), \
+             self.assertRaisesRegex(lixx.InstallError, "Staged file changed"):
+            lixx.run("install", [])
+        self.assertFalse((self.system / relative).exists())
+        self.assertEqual(list(self.system.rglob(".lixx-*")), [])
 
     def test_discovers_new_preferences_and_limits_system_paths(self):
         profile = self.target_tree / "root/etc/apt"
