@@ -1,0 +1,271 @@
+#!/usr/bin/python3
+"""Install Lixx user files from the current checkout."""
+
+import argparse
+import fcntl
+import hashlib
+import os
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+from contextlib import ExitStack
+from dataclasses import dataclass
+from pathlib import Path
+
+
+class InstallError(Exception):
+    pass
+
+
+class Cancelled(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class Contents:
+    size: int
+    sha256: str
+
+
+def read_contents(path, output=None):
+    digest = hashlib.sha256()
+    size = 0
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    with os.fdopen(os.open(path, flags), "rb") as source:
+        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+            raise InstallError(f"Expected a regular file at {path}")
+        while block := source.read(1024 * 1024):
+            digest.update(block)
+            size += len(block)
+            if output is not None:
+                output.write(block)
+    return Contents(size, digest.hexdigest())
+
+
+@dataclass(frozen=True)
+class Asset:
+    staged: Path
+    destination: Path
+    contents: Contents
+
+
+@dataclass(frozen=True)
+class Destination:
+    path: Path
+    contents: Contents | None = None
+    mode: int | None = None
+    link: str | None = None
+
+
+def source_files(directory):
+    for entry in directory.iterdir():
+        mode = entry.lstat().st_mode
+        if stat.S_ISDIR(mode):
+            yield from source_files(entry)
+        elif stat.S_ISREG(mode):
+            yield entry
+        else:
+            raise InstallError(f"Expected a regular asset or directory at {entry}")
+
+
+def destination_path(requested, checkout):
+    # Resolve parents, keeping the final component intact so a reviewed link
+    # can be replaced without writing the file it points to.
+    path = requested.parent.resolve() / requested.name
+    if path.is_relative_to(checkout):
+        raise InstallError(f"Destination points into the checkout: {requested}")
+    return path
+
+
+def check_layout(destinations):
+    paths = set(destinations)
+    if len(paths) != len(destinations):
+        raise InstallError("Multiple assets map to the same destination.")
+    for path in paths:
+        if any(parent in paths for parent in path.parents):
+            raise InstallError(f"Another asset must be a directory to install {path}")
+
+
+def stage_assets(checkout, home):
+    source = checkout / "static_assets" / "home"
+    if source.resolve() != source:
+        raise InstallError(f"Asset directory points through a symlink: {source}")
+    config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+    if not config.is_absolute():
+        config = home / ".config"
+    zsh = Path(os.environ.get("ZDOTDIR") or config / "zsh")
+    destinations = {}
+    for path in sorted(source_files(source)):
+        relative = path.relative_to(source)
+        if relative.is_relative_to(".config/zsh"):
+            destinations[relative] = zsh / relative.relative_to(".config/zsh")
+        elif relative.is_relative_to(".config"):
+            destinations[relative] = config / relative.relative_to(".config")
+        else:
+            destinations[relative] = home / relative
+    check_layout([destination_path(path, checkout) for path in destinations.values()])
+
+    tree = checkout / "tree"
+    if tree.is_symlink() or home.is_relative_to(tree):
+        raise InstallError(f"Unsafe staging directory: {tree}")
+    staged_home = tree / "home"
+    if staged_home.exists() or staged_home.is_symlink():
+        shutil.rmtree(staged_home)
+    staged_home.mkdir(parents=True)
+    assets = []
+    for relative, destination in destinations.items():
+        staged = staged_home / relative
+        staged.parent.mkdir(parents=True, exist_ok=True)
+        with staged.open("xb") as output:
+            contents = read_contents(source / relative, output)
+        assets.append(Asset(staged, destination, contents))
+    return assets
+
+
+def inspect_destination(asset, checkout):
+    path = destination_path(asset.destination, checkout)
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return Destination(path)
+    if stat.S_ISLNK(mode):
+        link = os.readlink(path)
+        data = os.fsencode(link)
+        return Destination(path, Contents(len(data), hashlib.sha256(data).hexdigest()), link=link)
+    if stat.S_ISDIR(mode):
+        raise InstallError(f"Destination is a directory: {path}")
+    if not stat.S_ISREG(mode):
+        raise InstallError(f"Expected a file at {path}, found {stat.filemode(mode)}")
+    return Destination(path, read_contents(path), mode=stat.S_IMODE(mode))
+
+
+def show_difference(asset, installed):
+    print(f"Review {installed.path}", flush=True)
+    if installed.link is not None:
+        print(f"Installed symlink -> {installed.link!r}", flush=True)
+    # Compare the actual bytes. Working-tree attributes and autocrlf can
+    # otherwise hide a difference consisting only of line endings.
+    command = [
+        "git", "--no-pager", "-c", "core.autocrlf=false", "-c", f"core.attributesFile={os.devnull}",
+        "diff", "--no-index", "--no-ext-diff", "--no-textconv", "--color=never",
+        "--", installed.path, asset.staged,
+    ]
+    diff = subprocess.run(command, cwd="/", stdout=subprocess.PIPE,
+                          env={**os.environ, "LC_ALL": "C", "GIT_ATTR_NOSYSTEM": "1"})
+    if diff.returncode != 1 or not diff.stdout:
+        raise InstallError(f"Could not display the reviewed difference for {installed.path}. Rerun lixx.")
+    sys.stdout.buffer.write(diff.stdout)
+    sys.stdout.buffer.flush()
+    if installed.mode is not None and b"\nold mode " in diff.stdout:
+        print(f"Keeping installed permissions {installed.mode:04o}.")
+    if b"\nBinary files " in diff.stdout:
+        for label, contents in (("Installed", installed.contents), ("Incoming", asset.contents)):
+            print(f"{label}: {contents.size} bytes, SHA-256 {contents.sha256}")
+
+
+def review_file(asset, installed):
+    if installed.contents is None:
+        return "yes"
+    if installed.link is None and installed.contents == asset.contents:
+        return "match"
+    show_difference(asset, installed)
+    while True:
+        answer = input("Replace? [yes/skip/cancel] ").strip().lower()
+        if answer in ("yes", "skip"):
+            return answer
+        if answer == "cancel":
+            raise Cancelled
+        print("Enter yes, skip, or cancel.")
+
+
+def review(assets, checkout):
+    decisions = {}
+    while True:
+        stable = True
+        paths = []
+        for asset in assets:
+            state = inspect_destination(asset, checkout)
+            paths.append(state.path)
+            if asset in decisions:
+                previous, answer = decisions[asset]
+                if answer == "skip" or state == previous:
+                    continue
+                print(f"Changed during review: {asset.destination}")
+            stable = False
+            try:
+                decisions[asset] = (state, review_file(asset, state))
+            except InstallError:
+                # Git can see a different file if an editor saves during the diff.
+                if inspect_destination(asset, checkout) == state:
+                    raise
+                decisions.pop(asset, None)
+        check_layout(paths)
+        if stable:
+            return [(asset, state) for asset, (state, answer) in decisions.items() if answer == "yes"]
+
+
+def install_file(asset, reviewed, checkout, create_mode):
+    if destination_path(asset.destination, checkout) != reviewed.path:
+        raise InstallError(f"Destination changed after review: {asset.destination}. Rerun lixx.")
+    path = reviewed.path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    output = tempfile.NamedTemporaryFile(dir=path.parent, prefix=".lixx-", delete=False)
+    temporary = Path(output.name)
+    try:
+        with output:
+            if read_contents(asset.staged, output) != asset.contents:
+                raise InstallError(f"Staged file changed after review: {asset.staged}. Rerun lixx.")
+            output.flush()
+            os.fchmod(output.fileno(), reviewed.mode if reviewed.mode is not None else create_mode)
+        if inspect_destination(asset, checkout) != reviewed:
+            raise InstallError(f"Destination changed after review: {asset.destination}. Rerun lixx.")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def run(completed):
+    checkout = Path(__file__).resolve().parent
+    home = Path.home().resolve()
+    with ExitStack() as locks:
+        # Directory locks also coordinate different checkout paths targeting
+        # one account. A fixed order avoids deadlocks and needs no lock files.
+        for directory in sorted({checkout, home}):
+            fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            locks.callback(os.close, fd)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        assets = stage_assets(checkout, home)
+        pending = review(assets, checkout)
+        mask = os.umask(0o077)
+        os.umask(mask)
+        for asset, reviewed in pending:
+            install_file(asset, reviewed, checkout, 0o666 & ~mask)
+            completed.append(reviewed.path)
+            print(f"Installed {reviewed.path}", flush=True)
+        print(f"Files installed: {len(completed)}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("install", "update"), help="apply the current checkout")
+    parser.parse_args()
+    completed = []
+    try:
+        run(completed)
+        return 0
+    except (Cancelled, EOFError, KeyboardInterrupt):
+        print("\nLixx cancelled.", file=sys.stderr)
+        status = 130
+    except (OSError, InstallError) as error:
+        print(f"lixx: {error}", file=sys.stderr)
+        status = 1
+    print(f"Completed file writes: {len(completed)}", file=sys.stderr)
+    for path in completed:
+        print(f"  {path}", file=sys.stderr)
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main())

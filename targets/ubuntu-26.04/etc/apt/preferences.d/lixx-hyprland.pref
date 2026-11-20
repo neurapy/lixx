@@ -1,0 +1,8 @@
+# Allow the selected compositor stack at the normal Ubuntu archive priority.
+Package: hyprland hyprland-data hyprland-guiutils libaquamarine15 libhyprcursor1 libhyprgraphics5 libhyprlang2 libhyprtoolkit6 libhyprutils13 libhyprwire3 libudis86.1 waybar xdg-desktop-portal-hyprland
+Pin: release o=LP-PPA-cppiber-hyprland
+Pin-Priority: 500
+
+Package: *
+Pin: release o=LP-PPA-cppiber-hyprland
+Pin-Priority: -1

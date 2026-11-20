@@ -1,0 +1,9 @@
+# Direct desktop requirements, one APT dependency expression per line.
+# Hyprland 0.57.2 is the baseline used for the current Lua configuration.
+hyprland (>= 0.57.2)
+uwsm
+xdg-desktop-portal-hyprland
+xdg-desktop-portal-gtk
+ghostty
+waybar
+zsh
