@@ -33,8 +33,9 @@ class InstallerTests(unittest.TestCase):
         self.home.mkdir()
         self.checkout.mkdir()
         shutil.copy2(REPO / "lixx", self.checkout)
-        shutil.copytree(REPO / "static_assets", self.checkout / "static_assets")
         self.assets = self.checkout / "static_assets/home"
+        (self.assets / OPTIONS).parent.mkdir(parents=True)
+        shutil.copy2(REPO / "static_assets/home" / OPTIONS, self.assets / OPTIONS)
         self.target = self.home / OPTIONS
         self.env = {
             "HOME": str(self.home), "PATH": os.defpath, "LC_ALL": "C",
@@ -42,7 +43,7 @@ class InstallerTests(unittest.TestCase):
             "GIT_CONFIG_GLOBAL": os.devnull,
         }
 
-    def cli(self, command="install", answers="", *, umask=0o022):
+    def cli(self, command="update", answers="", *, umask=0o022):
         return subprocess.run(
             [self.checkout / "lixx", command], input=answers, text=True,
             capture_output=True, cwd=self.root, env=self.env, timeout=10, umask=umask,
@@ -98,6 +99,22 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse(stale.exists())
         self.assertFalse((self.home / "stale").exists())
 
+    def test_executable_mode_is_reviewed_and_repaired(self):
+        command = Path(".local/bin/example")
+        source = self.assets / command
+        write(source, "#!/bin/sh\nexit 0\n")
+        source.chmod(0o755)
+        self.assertEqual(self.cli(umask=0o027).returncode, 0)
+        installed = self.home / command
+        self.assertEqual(stat.S_IMODE(installed.stat().st_mode), 0o750)
+        installed.chmod(0o640)
+        result = self.cli(answers="skip\n")
+        self.assertIn("old mode 100644", result.stdout)
+        self.assertEqual(stat.S_IMODE(installed.stat().st_mode), 0o640)
+        self.assertEqual(self.cli(answers="yes\n").returncode, 0)
+        self.assertEqual(stat.S_IMODE(installed.stat().st_mode), 0o740)
+        self.assertIn("Files installed: 0", self.cli().stdout)
+
     def test_dirty_checkout_diff_skip_then_yes_preserves_permissions(self):
         for args in (["init", "-q"], ["add", "static_assets"],
                      ["-c", "user.name=Fixture", "-c", "user.email=test@invalid",
@@ -149,6 +166,8 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual((self.home / "review").read_text(), "personal")
 
     def test_xdg_zdotdir_and_zsh_after_checkout_move(self):
+        for relative in (".zshenv", ".config/zsh/.zshrc"):
+            shutil.copy2(REPO / "static_assets/home" / relative, self.assets / relative)
         config = self.root / "custom config"
         self.env["XDG_CONFIG_HOME"] = str(config)
         self.assertEqual(self.cli().returncode, 0)
@@ -163,18 +182,32 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual((config / "example/settings").read_text(), "test")
         self.checkout.rename(self.root / "moved checkout")
         command = (
-            'source "$ZDOTDIR/options.zsh" && '
             '[[ $HISTSIZE == 200000 && -o extended_glob && -o glob_dots && '
             '$HISTFILE == "$XDG_STATE_HOME/zsh/history" && -d ${HISTFILE:h} ]]'
         )
         master, slave = pty.openpty()
         try:
-            result = subprocess.run(["zsh", "-fic", command], env=self.env, cwd=self.home,
+            result = subprocess.run(["zsh", "-ic", command], env=self.env, cwd=self.home,
                                     stdin=slave, stdout=slave, stderr=slave, timeout=5)
             self.assertEqual(result.returncode, 0)
         finally:
             os.close(slave)
             os.close(master)
+
+    def test_data_home_installs_regular_font_files(self):
+        relative = Path("fonts/example.ttf")
+        source = self.assets / ".local/share" / relative
+        write(source, "font fixture")
+        data = self.root / "user data"
+        self.env["XDG_DATA_HOME"] = str(data)
+        self.assertEqual(self.cli().returncode, 0)
+        self.assertEqual((data / relative).read_bytes(), source.read_bytes())
+        self.assertFalse((data / relative).samefile(source))
+        default = self.home / ".local/share" / relative
+        self.assertFalse(default.exists())
+        self.env["XDG_DATA_HOME"] = "relative"
+        self.assertEqual(self.cli().returncode, 0)
+        self.assertEqual(default.read_bytes(), source.read_bytes())
 
     def test_symlink_is_a_conflict_even_for_identical_or_missing_target(self):
         source = self.assets / OPTIONS

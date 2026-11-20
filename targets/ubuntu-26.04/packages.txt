@@ -1,9 +1,54 @@
 # Direct desktop requirements, one APT dependency expression per line.
-# Hyprland 0.57.2 is the baseline used for the current Lua configuration.
+
+# Compositor, its startup dialogs and the login session.
 hyprland (>= 0.57.2)
+hyprland-guiutils
 uwsm
+dbus-user-session
+libegl-mesa0
+libgl1-mesa-dri
+xwayland
+xdg-desktop-portal
 xdg-desktop-portal-hyprland
 xdg-desktop-portal-gtk
-ghostty
+
+# Audio, cameras and Bluetooth.
+pipewire-audio
+libspa-0.2-libcamera
+libcamera-ipa
+rtkit
+bluez
+
+# Services, fonts and toolkit resources used by the installed configs.
 waybar
+hypridle
+hyprlock
+hyprsunset
+hyprpolkitagent
+swaybg
+sway-notification-center
+swayosd
+ibus
+at-spi2-core
+adwaita-icon-theme-legacy
+fonts-dejavu-core
+fonts-dejavu-mono
+fonts-noto-color-emoji
+upower
+python3-gi
+gir1.2-glib-2.0
+
+# Programs opened from key bindings and Waybar.
+ghostty
 zsh
+fuzzel
+libnotify-bin
+brightnessctl
+playerctl
+btop
+pavucontrol
+network-manager
+hyprpicker
+grim
+slurp
+wl-clipboard

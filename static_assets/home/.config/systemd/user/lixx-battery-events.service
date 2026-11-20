@@ -1,0 +1,11 @@
+[Unit]
+Description=Lixx battery alerts from UPower
+PartOf=wayland-session@hyprland.desktop.target
+After=wayland-wm@hyprland.desktop.service wayland-session-waitenv.service
+
+[Service]
+Type=exec
+ExecStart=%h/.local/bin/lixx-battery-events
+Restart=on-failure
+RestartSec=2
+Slice=background.slice

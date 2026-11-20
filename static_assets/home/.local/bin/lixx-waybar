@@ -1,0 +1,46 @@
+#!/usr/bin/python3
+"""Start the reviewed bar config with the modules supported by this machine."""
+import json
+import os
+import shutil
+from pathlib import Path
+import tempfile
+
+def has_battery(power_supply):
+    for kind in power_supply.glob("*/type"):
+        supply = kind.parent
+        try:
+            if kind.read_text().strip() != "Battery":
+                continue
+            scope = supply / "scope"
+            if scope.exists() and scope.read_text().strip().lower() == "device":
+                continue
+        except FileNotFoundError:
+            continue  # A removable device disappeared during discovery.
+        if ((supply / "uevent").exists() and (supply / "status").exists()
+                and any((supply / field).exists() for field in ("capacity", "charge_now"))):
+            return True
+    return False
+
+
+def bar_config(config, devices):
+    # Waybar checks hosts before constructing a module. Its exec-if check
+    # only applies to polling modules, while Voxtype provides a stream.
+    settings = {"include": [str(config / "config.jsonc")]}
+    if not has_battery(devices / "power_supply"):
+        settings["battery"] = {"hosts": []}
+    if not any((devices / "bluetooth").glob("hci[0-9]*")):
+        settings["bluetooth"] = {"hosts": []}
+    if not (shutil.which("voxtype") and shutil.which("omarchy-voxtype-status")):
+        settings["custom/voxtype"] = {"hosts": []}
+    return settings
+
+
+if __name__ == "__main__":
+    config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "waybar"
+    runtime = Path(os.environ["XDG_RUNTIME_DIR"]) / "lixx-waybar"
+    runtime.mkdir(mode=0o700, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", dir=runtime, delete=False) as f:
+        json.dump(bar_config(config, Path("/sys/class")), f)
+    os.replace(f.name, runtime / "config.json")
+    os.execl("/usr/bin/waybar", "waybar", "-c", str(runtime / "config.json"), "-s", str(config / "style.css"))

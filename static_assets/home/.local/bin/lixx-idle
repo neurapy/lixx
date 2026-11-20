@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+if [ "${1:-}" = toggle ]; then
+    if systemctl --user is-active --quiet hypridle.service; then
+        systemctl --user stop hypridle.service
+    else
+        systemctl --user start hypridle.service
+    fi
+    pkill -RTMIN+9 -x -u "$(id -u)" waybar || :
+elif systemctl --user is-active --quiet hypridle.service; then
+    echo '{"text": ""}'
+else
+    echo '{"text": "󱫖", "tooltip": "Idle lock disabled", "class": "active"}'
+fi

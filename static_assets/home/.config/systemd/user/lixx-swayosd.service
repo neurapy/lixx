@@ -1,0 +1,8 @@
+[Unit]
+Description=On-screen media and brightness controls
+PartOf=wayland-session@hyprland.desktop.target
+After=wayland-wm@hyprland.desktop.service wayland-session-waitenv.service
+
+[Service]
+ExecStart=/usr/bin/swayosd-server
+Slice=app.slice

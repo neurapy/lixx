@@ -1,0 +1,8 @@
+[Unit]
+Description=Start camera monitoring when a video device is available
+PartOf=wireplumber.service
+
+[Path]
+PathExistsGlob=/dev/video[0-9]*
+PathExistsGlob=/dev/media[0-9]*
+Unit=wireplumber@video-capture.service

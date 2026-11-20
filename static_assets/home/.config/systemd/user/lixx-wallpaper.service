@@ -1,0 +1,8 @@
+[Unit]
+Description=Lixx desktop wallpaper
+PartOf=wayland-session@hyprland.desktop.target
+After=wayland-wm@hyprland.desktop.service wayland-session-waitenv.service
+
+[Service]
+ExecStart=/usr/bin/swaybg -i %E/hypr/wallpaper.png -m fill
+Slice=background.slice

@@ -1,10 +1,12 @@
 #!/usr/bin/python3
-"""Install Lixx user files from the current checkout."""
+"""Install the Lixx desktop or update its user files from this checkout."""
 
 import argparse
 import fcntl
 import hashlib
+import io
 import os
+import platform
 import shutil
 import stat
 import subprocess
@@ -49,6 +51,7 @@ class Asset:
     staged: Path
     destination: Path
     contents: Contents
+    executable: bool = False
 
 
 @dataclass(frozen=True)
@@ -88,6 +91,27 @@ def check_layout(destinations):
             raise InstallError(f"Another asset must be a directory to install {path}")
 
 
+def staging_directory(checkout, home, scope):
+    tree = checkout / "tree"
+    if tree.is_symlink() or home.is_relative_to(tree):
+        raise InstallError(f"Unsafe staging directory: {tree}")
+    directory = tree / scope
+    if directory.exists() or directory.is_symlink():
+        shutil.rmtree(directory)
+    directory.mkdir(parents=True)
+    return directory
+
+
+def stage_file(source, staged, destination, *, allow_executable=True):
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    with staged.open("xb") as output:
+        contents = read_contents(source, output)
+    executable = allow_executable and bool(source.stat().st_mode & stat.S_IXUSR)
+    if executable:
+        staged.chmod(0o755)
+    return Asset(staged, destination, contents, executable)
+
+
 def stage_assets(checkout, home):
     source = checkout / "static_assets" / "home"
     if source.resolve() != source:
@@ -95,6 +119,9 @@ def stage_assets(checkout, home):
     config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
     if not config.is_absolute():
         config = home / ".config"
+    data = Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share")
+    if not data.is_absolute():
+        data = home / ".local/share"
     zsh = Path(os.environ.get("ZDOTDIR") or config / "zsh")
     destinations = {}
     for path in sorted(source_files(source)):
@@ -103,25 +130,15 @@ def stage_assets(checkout, home):
             destinations[relative] = zsh / relative.relative_to(".config/zsh")
         elif relative.is_relative_to(".config"):
             destinations[relative] = config / relative.relative_to(".config")
+        elif relative.is_relative_to(".local/share"):
+            destinations[relative] = data / relative.relative_to(".local/share")
         else:
             destinations[relative] = home / relative
     check_layout([destination_path(path, checkout) for path in destinations.values()])
 
-    tree = checkout / "tree"
-    if tree.is_symlink() or home.is_relative_to(tree):
-        raise InstallError(f"Unsafe staging directory: {tree}")
-    staged_home = tree / "home"
-    if staged_home.exists() or staged_home.is_symlink():
-        shutil.rmtree(staged_home)
-    staged_home.mkdir(parents=True)
-    assets = []
-    for relative, destination in destinations.items():
-        staged = staged_home / relative
-        staged.parent.mkdir(parents=True, exist_ok=True)
-        with staged.open("xb") as output:
-            contents = read_contents(source / relative, output)
-        assets.append(Asset(staged, destination, contents))
-    return assets
+    staged_home = staging_directory(checkout, home, "home")
+    return [stage_file(source / relative, staged_home / relative, destination)
+            for relative, destination in destinations.items()]
 
 
 def inspect_destination(asset, checkout):
@@ -148,7 +165,8 @@ def show_difference(asset, installed):
     # Compare the actual bytes. Working-tree attributes and autocrlf can
     # otherwise hide a difference consisting only of line endings.
     command = [
-        "git", "--no-pager", "-c", "core.autocrlf=false", "-c", f"core.attributesFile={os.devnull}",
+        "git", "--no-pager", "-c", "core.autocrlf=false", "-c", "core.fileMode=true",
+        "-c", f"core.attributesFile={os.devnull}",
         "diff", "--no-index", "--no-ext-diff", "--no-textconv", "--color=never",
         "--", installed.path, asset.staged,
     ]
@@ -158,7 +176,9 @@ def show_difference(asset, installed):
         raise InstallError(f"Could not display the reviewed difference for {installed.path}. Rerun lixx.")
     sys.stdout.buffer.write(diff.stdout)
     sys.stdout.buffer.flush()
-    if installed.mode is not None and b"\nold mode " in diff.stdout:
+    if asset.executable and installed.mode is not None and not installed.mode & stat.S_IXUSR:
+        print("Replacement requires owner execute permission.")
+    elif installed.mode is not None and b"\nold mode " in diff.stdout:
         print(f"Keeping installed permissions {installed.mode:04o}.")
     if b"\nBinary files " in diff.stdout:
         for label, contents in (("Installed", installed.contents), ("Incoming", asset.contents)):
@@ -168,7 +188,8 @@ def show_difference(asset, installed):
 def review_file(asset, installed):
     if installed.contents is None:
         return "yes"
-    if installed.link is None and installed.contents == asset.contents:
+    if (installed.link is None and installed.contents == asset.contents
+            and (not asset.executable or installed.mode & stat.S_IXUSR)):
         return "match"
     show_difference(asset, installed)
     while True:
@@ -218,7 +239,10 @@ def install_file(asset, reviewed, checkout, create_mode):
             if read_contents(asset.staged, output) != asset.contents:
                 raise InstallError(f"Staged file changed after review: {asset.staged}. Rerun lixx.")
             output.flush()
-            os.fchmod(output.fileno(), reviewed.mode if reviewed.mode is not None else create_mode)
+            mode = reviewed.mode if reviewed.mode is not None else create_mode
+            if asset.executable:
+                mode |= stat.S_IXUSR
+            os.fchmod(output.fileno(), mode)
         if inspect_destination(asset, checkout) != reviewed:
             raise InstallError(f"Destination changed after review: {asset.destination}. Rerun lixx.")
         os.replace(temporary, path)
@@ -226,9 +250,97 @@ def install_file(asset, reviewed, checkout, create_mode):
         temporary.unlink(missing_ok=True)
 
 
-def run(completed):
+PROFILE = Path("targets/ubuntu-26.04")
+APT_DIR = Path("/etc/apt")
+
+
+def check_system():
+    release = platform.freedesktop_os_release()
+    arch = subprocess.check_output(["dpkg", "--print-architecture"], text=True).strip()
+    if (release.get("ID"), release.get("VERSION_ID"), arch) != ("ubuntu", "26.04", "amd64"):
+        raise InstallError("System installation requires Ubuntu 26.04 LTS on amd64.")
+    if os.geteuid() == 0:
+        raise InstallError("Run ./lixx install as the desktop user. Lixx uses sudo for APT.")
+
+
+def package_requirements(profile):
+    lines = (profile / "packages.txt").read_text().splitlines()
+    packages = [line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")]
+    if not packages or any(package.startswith("-") for package in packages):
+        raise InstallError(f"Invalid APT package list in {profile}")
+    return packages
+
+
+def apt_indexes(source=None):
+    # Each URI identifies a suite, component and architecture. APT also handles
+    # disabled entries and can enumerate targets before the first index download.
+    command = ["apt-get", "indextargets", "--no-release-info", "--format", "$(URI) $(SOURCESENTRY)",
+               "Identifier: Packages", "Architecture: amd64"]
+    if source is not None:
+        command.extend(["-o", f"Dir::Etc::sourcelist={source}", "-o", "Dir::Etc::sourceparts=-"])
+    output = subprocess.check_output(command, text=True)
+    return dict(line.split(" ", 1) for line in output.splitlines() if line)
+
+
+def stage_apt(checkout, home, profile):
+    source_dir = profile / "etc/apt"
+    staged = staging_directory(checkout, home, "rootfs") / "etc/apt"
+    suffixes = {"sources.list.d": ".sources", "preferences.d": ".pref"}
+    active = None
+    assets = []
+    for source in sorted(source_files(source_dir)):
+        relative = source.relative_to(source_dir)
+        destination = APT_DIR / relative
+        if source.suffix != suffixes.get(str(relative.parent)):
+            raise InstallError(f"Unexpected APT profile file: {source}")
+        if source.suffix == ".sources" and not os.path.lexists(destination):
+            if active is None:
+                active = apt_indexes()
+            requested = apt_indexes(source)
+            if requested and requested.keys() <= active.keys():
+                entries = sorted({active[uri] for uri in requested})
+                print(f"Using existing APT source: {', '.join(entries)}")
+                continue
+        assets.append(stage_file(source, staged / relative, destination, allow_executable=False))
+    return assets
+
+
+def install_apt_file(asset, reviewed, checkout):
+    path = reviewed.path
+    if path != asset.destination:
+        raise InstallError(f"APT directory must be at {asset.destination.parent}")
+    payload = io.BytesIO()
+    if read_contents(asset.staged, payload) != asset.contents:
+        raise InstallError(f"Staged file changed after review: {asset.staged}. Rerun lixx.")
+    temporary = subprocess.check_output(["sudo", "mktemp", "--", path.parent / ".lixx-XXXXXXXX"],
+                                        text=True).strip()
+    try:
+        mode = reviewed.mode if reviewed.mode is not None else 0o644
+        subprocess.run(["sudo", "tee", "--", temporary], input=payload.getvalue(),
+                       stdout=subprocess.DEVNULL, check=True)
+        subprocess.run(["sudo", "chmod", "--", f"{mode:o}", temporary], check=True)
+        if inspect_destination(asset, checkout) != reviewed:
+            raise InstallError(f"Destination changed after review: {path}. Rerun lixx.")
+        subprocess.run(["sudo", "mv", "-fT", "--", temporary, path], check=True)
+    except BaseException:
+        subprocess.run(["sudo", "rm", "-f", "--", temporary], check=False)
+        raise
+
+
+def install_packages(packages):
+    print("Refreshing APT indexes...", flush=True)
+    subprocess.run(["sudo", "apt-get", "--error-on=any", "update"], check=True)
+    print("Installing the desktop packages...", flush=True)
+    subprocess.run(["sudo", "apt-get", "--no-remove", "--no-install-recommends", "satisfy",
+                    *packages], check=True)
+
+
+def run(command, completed):
     checkout = Path(__file__).resolve().parent
     home = Path.home().resolve()
+    full_install = command == "install"
+    if full_install:
+        check_system()
     with ExitStack() as locks:
         # Directory locks also coordinate different checkout paths targeting
         # one account. A fixed order avoids deadlocks and needs no lock files.
@@ -236,29 +348,48 @@ def run(completed):
             fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
             locks.callback(os.close, fd)
             fcntl.flock(fd, fcntl.LOCK_EX)
-        assets = stage_assets(checkout, home)
-        pending = review(assets, checkout)
+        home_assets = stage_assets(checkout, home)
+        apt_assets = []
+        if full_install:
+            profile = checkout / PROFILE
+            packages = package_requirements(profile)
+            apt_assets = stage_apt(checkout, home, profile)
+        pending = review(apt_assets + home_assets, checkout)
+        if full_install:
+            for asset, reviewed in pending:
+                if asset in apt_assets:
+                    install_apt_file(asset, reviewed, checkout)
+                    completed.append(reviewed.path)
+                    print(f"Installed {reviewed.path}", flush=True)
+            install_packages(packages)
         mask = os.umask(0o077)
         os.umask(mask)
         for asset, reviewed in pending:
-            install_file(asset, reviewed, checkout, 0o666 & ~mask)
+            if asset in apt_assets:
+                continue
+            create_mode = (0o777 if asset.executable else 0o666) & ~mask
+            install_file(asset, reviewed, checkout, create_mode)
             completed.append(reviewed.path)
             print(f"Installed {reviewed.path}", flush=True)
         print(f"Files installed: {len(completed)}")
+        if full_install:
+            print("From a local TTY, start the desktop with: uwsm start -- hyprland.desktop")
+            print("Super+Return opens Ghostty. Super+Space opens the app launcher.")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("install", "update"), help="apply the current checkout")
-    parser.parse_args()
+    parser.add_argument("command", choices=("install", "update"),
+                        help="install the Ubuntu desktop, or update only your user files")
+    args = parser.parse_args()
     completed = []
     try:
-        run(completed)
+        run(args.command, completed)
         return 0
     except (Cancelled, EOFError, KeyboardInterrupt):
         print("\nLixx cancelled.", file=sys.stderr)
         status = 130
-    except (OSError, InstallError) as error:
+    except (OSError, InstallError, subprocess.CalledProcessError) as error:
         print(f"lixx: {error}", file=sys.stderr)
         status = 1
     print(f"Completed file writes: {len(completed)}", file=sys.stderr)

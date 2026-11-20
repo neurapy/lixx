@@ -1,0 +1,93 @@
+#!/usr/bin/python3
+"""Waybar Pomodoro. Left-click pauses or resumes, right-click resets."""
+import fcntl
+import json
+import math
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+
+def duration(phase):
+    return 25 * 60 if phase % 2 == 0 else (15 if phase == 7 else 5) * 60
+
+
+def state(path, action=None):
+    # A monitor can have its own Waybar process. All displays share the same
+    # deadline, and only the first observer to advance a phase sends the alert.
+    with path.open() as file:
+        fcntl.flock(file, fcntl.LOCK_EX)
+        data = file.read()
+        phase, seconds, deadline = json.loads(data) if data else (0, duration(0), None)
+        now = time.monotonic()
+        if deadline is not None:
+            seconds = max(0, math.ceil(deadline - now))
+        elapsed = seconds == 0
+        if elapsed:
+            phase = (phase + 1) % 8
+            seconds = duration(phase)
+            deadline = now + seconds
+        if action == "toggle":
+            deadline = now + seconds if deadline is None else None
+        elif action == "reset":
+            phase, seconds, deadline = 0, duration(0), None
+        if action or elapsed:
+            with path.open("w") as writer:
+                json.dump([phase, seconds, deadline], writer)
+    label = "Work" if phase % 2 == 0 else "Break"
+    if elapsed:
+        subprocess.Popen(["notify-send", "Pomodoro", label + " time"])
+    return label, seconds, deadline is not None
+
+
+def watch(path):
+    from gi.repository import Gio, GLib
+
+    update_timer = None
+    last = None
+
+    def render(*_):
+        nonlocal update_timer, last
+        if update_timer:
+            GLib.source_remove(update_timer)
+            update_timer = None
+        label, seconds, running = state(path)
+        row = {"text": f"{seconds // 60:02}:{seconds % 60:02}", "tooltip": label,
+               "class": [label.lower(), "running" if running else "paused"]}
+        if row != last:
+            print(json.dumps(row), flush=True)
+            last = row
+        if running:
+            update_timer = GLib.timeout_add(1000, tick)
+
+    def tick():
+        nonlocal update_timer
+        update_timer = None
+        render()
+        return False
+
+    monitor = Gio.File.new_for_path(str(path)).monitor_file(Gio.FileMonitorFlags.NONE, None)
+    monitor.connect("changed", render)
+    render()
+    GLib.MainLoop().run()
+
+
+if __name__ == "__main__":
+    action = sys.argv[1:]
+    if action not in ([], ["toggle"], ["reset"]):
+        sys.exit("Usage: lixx-pomodoro [toggle|reset]")
+    original = shutil.which("waybar-module-pomodoro")
+    if original:
+        os.execv(original, [original, *(action or ["--no-icons"])])
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    path = Path(os.environ["XDG_RUNTIME_DIR"]) / "lixx-pomodoro.json"
+    if not path.exists():
+        path.touch(exist_ok=True)
+    if action:
+        state(path, action[0])
+    else:
+        watch(path)

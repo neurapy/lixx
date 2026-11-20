@@ -1,0 +1,13 @@
+[Unit]
+Description=Waybar for the Lixx desktop
+PartOf=graphical-session.target
+# The DND indicator subscribes to SwayNC, and the idle indicator reads hypridle.
+# Stop the bar before those services so a subscriber cannot reactivate them at logout.
+After=wayland-wm@hyprland.desktop.service wayland-session-waitenv.service swaync.service hypridle.service
+
+[Service]
+Type=exec
+ExecStart=%h/.local/bin/lixx-waybar
+Restart=on-failure
+RestartSec=2
+Slice=app.slice
