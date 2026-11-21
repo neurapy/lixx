@@ -5,7 +5,7 @@ After=wayland-wm@hyprland.desktop.service wayland-session-waitenv.service
 
 [Service]
 Type=exec
-ExecStart=/usr/bin/python3 %E/hypr/battery_events.py
+ExecStart=%D/lixx-system/bin/lixx-battery-events
 Restart=on-failure
 RestartSec=2
 Slice=background.slice

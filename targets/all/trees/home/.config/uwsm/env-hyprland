@@ -1,3 +1,5 @@
+. "${XDG_CONFIG_HOME:-$HOME/.config}/env/session.sh"
+
 # Changes require a restart to take effect.
 
 export HYPRCURSOR_SIZE=24

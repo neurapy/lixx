@@ -31,12 +31,18 @@ swayosd
 ibus
 at-spi2-core
 adwaita-icon-theme-legacy
+gnome-themes-extra-data
+yaru-theme-icon
+gsettings-desktop-schemas
+libglib2.0-bin
+dconf-gsettings-backend
 fonts-dejavu-core
 fonts-dejavu-mono
 fonts-noto-color-emoji
 upower
 python3-gi
 gir1.2-glib-2.0
+gir1.2-gdkpixbuf-2.0
 
 # Interactive shell, directory jumping and fuzzy history/file selection.
 zsh
@@ -45,7 +51,6 @@ fzf
 
 # Programs opened from key bindings and Waybar.
 ghostty
-fuzzel
 libnotify-bin
 brightnessctl
 playerctl
@@ -56,3 +61,26 @@ hyprpicker
 grim
 slurp
 wl-clipboard
+
+# Walker, Elephant and their application, file, calculator and clipboard providers.
+libgtk4-layer-shell0
+libpoppler-glib8t64
+fd-find
+qalc
+imagemagick
+xdg-utils
+xdg-user-dirs
+epiphany-browser | firefox
+nautilus
+gnome-calculator
+
+# Desktop actions and the wallpaper collection.
+wf-recorder
+swappy
+tesseract-ocr
+tesseract-ocr-eng
+pulseaudio-utils
+rfkill
+zenity
+jq
+ubuntu-wallpapers-noble

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Elephant's file provider invokes fd by its upstream name.
+exec /usr/bin/fdfind "$@"

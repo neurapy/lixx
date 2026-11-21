@@ -1,0 +1,119 @@
+# Upstream releases and Zsh revisions used on the reference workstation.
+
+[[archive]]
+url = "https://github.com/abenz1267/walker/releases/download/v2.15.2/walker-v2.15.2-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "9d9bc7688b439fd2814a3491f2ba431836b2050c862d22b131a1a3c61fb931e6"
+destination = ".local/bin/walker"
+executable = true
+member = "walker"
+
+[[archive]]
+url = "https://github.com/abenz1267/elephant/releases/download/v2.20.3/calc-linux-amd64.tar.gz"
+sha256 = "b000933599bb3a861731451add1ab2b5910101a31e0217e1867786c0fc03856a"
+destination = ".config/elephant/providers/calc.so"
+member = "calc-linux-amd64.so"
+
+[[archive]]
+url = "https://github.com/abenz1267/elephant/releases/download/v2.20.3/clipboard-linux-amd64.tar.gz"
+sha256 = "6ea3c03d3e960a53cc2ee05572506072c8ea9f8b66cb5546d77937ec92cdb65d"
+destination = ".config/elephant/providers/clipboard.so"
+member = "clipboard-linux-amd64.so"
+
+[[archive]]
+url = "https://github.com/abenz1267/elephant/releases/download/v2.20.3/desktopapplications-linux-amd64.tar.gz"
+sha256 = "066abe040896a13b04230a0a1acf304e0b3e4c000da01e8f66971cf585ec2566"
+destination = ".config/elephant/providers/desktopapplications.so"
+member = "desktopapplications-linux-amd64.so"
+
+[[archive]]
+url = "https://github.com/abenz1267/elephant/releases/download/v2.20.3/elephant-linux-amd64.tar.gz"
+sha256 = "a78abbeafc13af61d68ba6427429216e8cb39af4687d658ab6065a4cec028e98"
+destination = ".local/bin/elephant"
+executable = true
+member = "elephant-linux-amd64"
+
+[[archive]]
+url = "https://github.com/abenz1267/elephant/releases/download/v2.20.3/files-linux-amd64.tar.gz"
+sha256 = "39109b9cbd24bf2e51fc2ab88b4165203c4f24079773518dae8616a149ea2078"
+destination = ".config/elephant/providers/files.so"
+member = "files-linux-amd64.so"
+
+[[archive]]
+url = "https://github.com/abenz1267/elephant/releases/download/v2.20.3/menus-linux-amd64.tar.gz"
+sha256 = "b4794be59b5deed50034180d09b9a2fc83939153e786f9a6326b1bc02733ea93"
+destination = ".config/elephant/providers/menus.so"
+member = "menus-linux-amd64.so"
+
+[[archive]]
+url = "https://github.com/abenz1267/elephant/releases/download/v2.20.3/providerlist-linux-amd64.tar.gz"
+sha256 = "c9a95d708965ae312204b403e69563bec2b04ad0ed0a462ea8d902c980afd40b"
+destination = ".config/elephant/providers/providerlist.so"
+member = "providerlist-linux-amd64.so"
+
+[[archive]]
+url = "https://github.com/abenz1267/elephant/releases/download/v2.20.3/symbols-linux-amd64.tar.gz"
+sha256 = "da19d68452c2c4bc536ce67103ca47fe326962c3d670159640f457077e8c5255"
+destination = ".config/elephant/providers/symbols.so"
+member = "symbols-linux-amd64.so"
+
+[[archive]]
+url = "https://github.com/abenz1267/elephant/releases/download/v2.20.3/websearch-linux-amd64.tar.gz"
+sha256 = "a71c383605ddc3c6fd371f1fd92bc46e51f13fcf6fb0bdeb8ab47b9c6363528e"
+destination = ".config/elephant/providers/websearch.so"
+member = "websearch-linux-amd64.so"
+
+[[archive]]
+url = "https://codeload.github.com/ohmyzsh/ohmyzsh/tar.gz/ff1df9a0399d56b9f6e957bb62a2d4ba6bc0ef4c"
+sha256 = "12f2b937b04be1279a29fb3fd1c4620e74bd5bbdbbc54fd7df9e2ad2c7e0e9b9"
+destination = ".local/share/lixx-system/zsh/oh-my-zsh"
+prefix = "ohmyzsh-ff1df9a0399d56b9f6e957bb62a2d4ba6bc0ef4c"
+include = ["LICENSE.txt", "oh-my-zsh.sh", "lib", "tools", "plugins/git", "plugins/sudo", "plugins/colored-man-pages"]
+
+[[archive]]
+url = "https://codeload.github.com/zsh-users/zsh-completions/tar.gz/46317b36e287341176b47f97a707abcf10ade8b4"
+sha256 = "7fed1671abf709ebb8bd6d396b9bb665b4d0eb971b588ad1c48aaf9f6e505396"
+destination = ".local/share/lixx-system/zsh/oh-my-zsh/custom/plugins/zsh-completions"
+prefix = "zsh-completions-46317b36e287341176b47f97a707abcf10ade8b4"
+include = ["LICENSE", "zsh-completions.plugin.zsh", "src"]
+
+[[archive]]
+url = "https://codeload.github.com/zsh-users/zsh-autosuggestions/tar.gz/85919cd1ffa7d2d5412f6d3fe437ebdbeeec4fc5"
+sha256 = "20665e469e720e674964a66854d5534b9af78cdfd438512746ecd1ade8e819ce"
+destination = ".local/share/lixx-system/zsh/oh-my-zsh/custom/plugins/zsh-autosuggestions"
+prefix = "zsh-autosuggestions-85919cd1ffa7d2d5412f6d3fe437ebdbeeec4fc5"
+include = ["LICENSE", "zsh-autosuggestions.plugin.zsh", "zsh-autosuggestions.zsh"]
+
+[[archive]]
+url = "https://codeload.github.com/Aloxaf/fzf-tab/tar.gz/fac145167f7ec1861233c54de0c8900b09c650fe"
+sha256 = "8e1e34a6a508785ee9bc9fba64c2ff8d1c689c045aa2fd383325de2daf571241"
+destination = ".local/share/lixx-system/zsh/oh-my-zsh/custom/plugins/fzf-tab"
+prefix = "fzf-tab-fac145167f7ec1861233c54de0c8900b09c650fe"
+include = ["LICENSE", "fzf-tab.plugin.zsh", "fzf-tab.zsh", "lib", "modules"]
+
+[[archive]]
+url = "https://codeload.github.com/jeffreytse/zsh-vi-mode/tar.gz/f01ced38ba12e1d2098bb96b64a20cfe30dd622b"
+sha256 = "45460af9559a18f50620871dd2fbbc55e2a93de82acfb036c1817b1eb6b8738f"
+destination = ".local/share/lixx-system/zsh/oh-my-zsh/custom/plugins/zsh-vi-mode"
+prefix = "zsh-vi-mode-f01ced38ba12e1d2098bb96b64a20cfe30dd622b"
+include = ["LICENSE", "zsh-vi-mode.plugin.zsh", "zsh-vi-mode.zsh"]
+
+[[archive]]
+url = "https://codeload.github.com/zdharma-continuum/fast-syntax-highlighting/tar.gz/3d574ccf48804b10dca52625df13da5edae7f553"
+sha256 = "20481200fdd23fe15df1e4ff77cfa778b2278cd43786befff9e406c031461ae5"
+destination = ".local/share/lixx-system/zsh/oh-my-zsh/custom/plugins/fast-syntax-highlighting"
+prefix = "fast-syntax-highlighting-3d574ccf48804b10dca52625df13da5edae7f553"
+include = ["LICENSE", "_fast-theme", "fast-highlight", "fast-string-highlight", "fast-syntax-highlighting.plugin.zsh", "fast-theme", "share", "themes", "→chroma"]
+
+[[archive]]
+url = "https://codeload.github.com/romkatv/powerlevel10k/tar.gz/36f3045d69d1ba402db09d09eb12b42eebe0fa3b"
+sha256 = "61a0ffd025d75457fa07f10805b12479522b6ab68c6733c816012377fc23e1ff"
+destination = ".local/share/lixx-system/zsh/oh-my-zsh/custom/themes/powerlevel10k"
+prefix = "powerlevel10k-36f3045d69d1ba402db09d09eb12b42eebe0fa3b"
+include = ["LICENSE", "powerlevel10k.zsh-theme", "powerlevel9k.zsh-theme", "internal", "config", "gitstatus/LICENSE", "gitstatus/gitstatus.plugin.zsh", "gitstatus/install", "gitstatus/install.info"]
+
+[[archive]]
+url = "https://github.com/romkatv/gitstatus/releases/download/v1.5.4/gitstatusd-linux-x86_64.tar.gz"
+sha256 = "9633816e7832109e530c9e2532b11a1edae08136d63aa7e40246c0339b7db304"
+destination = ".local/share/lixx-system/zsh/oh-my-zsh/custom/themes/powerlevel10k/gitstatus/usrbin/gitstatusd-linux-x86_64"
+executable = true
+member = "gitstatusd-linux-x86_64"

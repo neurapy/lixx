@@ -1,0 +1,89 @@
+#!/usr/bin/python3
+"""Capture a Wayland selection or record the focused output."""
+import argparse
+from datetime import datetime
+import json
+from pathlib import Path
+import subprocess
+
+UNIT = "lixx-recording.service"
+
+
+def output(*command):
+    return subprocess.check_output(command, text=True).strip()
+
+
+def media_file(kind, directory, suffix):
+    root = Path(output("xdg-user-dir", kind)) / directory
+    root.mkdir(parents=True, exist_ok=True)
+    return root / (datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f") + suffix)
+
+
+def refresh_indicator():
+    subprocess.run(["systemctl", "--user", "kill", "--kill-whom=main", "-s", "RTMIN+8", "lixx-waybar.service"],
+                   stderr=subprocess.DEVNULL)
+
+
+def record(audio):
+    monitors = json.loads(output("hyprctl", "-j", "monitors"))
+    monitor = next(m["name"] for m in monitors if m["focused"])
+    file = media_file("VIDEOS", "Screencasts", ".mp4")
+    command = ["wf-recorder", "-o", monitor, "-f", str(file)]
+    if audio == "desktop":
+        command.append("--audio=" + output("pactl", "get-default-sink") + ".monitor")
+    elif audio == "microphone":
+        command.append("--audio=" + output("pactl", "get-default-source"))
+    subprocess.run(["systemd-run", "--user", "--quiet", "--collect", "--service-type=exec", "--unit=" + UNIT,
+                    "--property=PartOf=graphical-session.target", "--property=KillSignal=SIGINT",
+                    "--property=ExecStopPost=-/usr/bin/systemctl --user kill --kill-whom=main -s RTMIN+8 lixx-waybar.service",
+                    *command], check=True)
+    refresh_indicator()
+
+
+def window_rectangles(clients, monitors):
+    visible = set()
+    for monitor in monitors:
+        for key in ("activeWorkspace", "specialWorkspace"):
+            workspace = monitor.get(key) or {}
+            if "id" in workspace:
+                visible.add(workspace["id"])
+    return [f"{w['at'][0]},{w['at'][1]} {w['size'][0]}x{w['size'][1]}"
+            for w in clients if w["mapped"] and (w.get("pinned") or w["workspace"]["id"] in visible)]
+
+
+def screenshot(action):
+    # slurp also accepts a click on a pre-defined window rectangle.
+    clients = json.loads(output("hyprctl", "-j", "clients"))
+    monitors = json.loads(output("hyprctl", "-j", "monitors"))
+    rectangles = window_rectangles(clients, monitors)
+    region = subprocess.run(["slurp"], input="\n".join(rectangles), text=True, stdout=subprocess.PIPE)
+    if region.returncode or not region.stdout.strip():
+        return
+    image = subprocess.check_output(["grim", "-g", region.stdout.strip(), "-"])
+    if action == "text":
+        text = subprocess.check_output(["tesseract", "stdin", "stdout"], input=image)
+        subprocess.run(["wl-copy"], input=text, check=True)
+        return
+    file = media_file("PICTURES", "Screenshots", ".png")
+    file.write_bytes(image)
+    if action == "annotate":
+        subprocess.run(["swappy", "-f", file, "-o", file], check=True)
+    else:
+        subprocess.run(["wl-copy", "--type", "image/png"], input=image, check=True)
+        subprocess.run(["notify-send", "Screenshot copied", str(file)])
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", choices=("screenshot", "annotate", "text", "record", "stop", "status"))
+    parser.add_argument("audio", choices=("desktop", "microphone"), nargs="?")
+    args = parser.parse_args()
+    if args.action == "status":
+        active = subprocess.run(["systemctl", "--user", "is-active", "--quiet", UNIT]).returncode == 0
+        print(json.dumps({"text": "󰻂", "tooltip": "Stop recording", "class": "active"} if active else {"text": ""}))
+    elif args.action == "stop":
+        subprocess.run(["systemctl", "--user", "stop", UNIT], check=True)
+    elif args.action == "record":
+        record(args.audio)
+    else:
+        screenshot(args.action)

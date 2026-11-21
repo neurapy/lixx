@@ -12,6 +12,8 @@ import stat
 import subprocess
 import sys
 import tempfile
+import tarfile
+import tomllib
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +54,11 @@ class Asset:
     destination: Path
     contents: Contents
     executable: bool = False
+
+
+@dataclass(frozen=True)
+class Retired(Asset):
+    known_hashes: frozenset = frozenset()
 
 
 @dataclass(frozen=True)
@@ -134,7 +141,67 @@ def stage_file(source, staged, destination, *, allow_executable=True):
     return Asset(staged, destination, contents, executable)
 
 
-def stage_home(checkout, home, trees):
+def staged_archives(archives, staged):
+    """Stage explicit regular files from checksum-pinned upstream distributions."""
+    if not archives:
+        return {}
+    cache = staged.parent / "downloads"
+    if cache.is_symlink():
+        raise InstallError(f"Unsafe download directory: {cache}")
+    cache.mkdir(exist_ok=True)
+    files = {}
+    for archive in archives:
+        digest = archive["sha256"]
+        if not re.fullmatch(r"[a-f0-9]{64}", digest) or not archive["url"].startswith("https://"):
+            raise InstallError("Invalid URL or SHA-256 in the archive manifest")
+        cached = cache / digest
+        if not cached.exists() or read_contents(cached).sha256 != digest:
+            with tempfile.TemporaryDirectory(dir=cache) as directory:
+                download = Path(directory) / "archive"
+                subprocess.run([APT_HELPER, "download-file", archive["url"], download,
+                                f"SHA256:{digest}"], check=True)
+                if read_contents(download).sha256 != digest:
+                    raise InstallError(f"Checksum mismatch for {archive['url']}")
+                os.replace(download, cached)
+        destination = Path(archive["destination"])
+        selected = set()
+        with tarfile.open(cached, "r:*") as tar:
+            for member in tar:
+                if not member.isfile():
+                    continue
+                if "member" in archive:
+                    if member.name != archive["member"]:
+                        continue
+                    relative = destination
+                    selected.add(member.name)
+                else:
+                    name = Path(member.name)
+                    if not name.is_relative_to(archive["prefix"]):
+                        continue
+                    part = name.relative_to(archive["prefix"])
+                    matches = [key for key in archive["include"] if part.is_relative_to(key)]
+                    if not matches:
+                        continue
+                    selected.update(matches)
+                    relative = destination / part
+                if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+                    raise InstallError(f"Invalid archive destination: {relative}")
+                output = staged / relative
+                if output.exists():
+                    raise InstallError(f"Multiple assets at {relative}")
+                output.parent.mkdir(parents=True, exist_ok=True)
+                with tar.extractfile(member) as source, output.open("xb") as target:
+                    shutil.copyfileobj(source, target)
+                executable = archive.get("executable", bool(member.mode & 0o100))
+                output.chmod(0o755 if executable else 0o644)
+                files[relative] = (output, executable)
+        expected = {archive["member"]} if "member" in archive else set(archive["include"])
+        if selected != expected:
+            raise InstallError(f"Missing entries in {archive['url']}: {sorted(expected - selected)}")
+    return files
+
+
+def stage_home(checkout, home, trees, manifest=None):
     files = tree_files(trees, "home")
     config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
     if not config.is_absolute():
@@ -143,21 +210,53 @@ def stage_home(checkout, home, trees):
     if not data.is_absolute():
         data = home / ".local/share"
     zsh = Path(os.environ.get("ZDOTDIR") or config / "zsh")
-    destinations = {}
-    for relative in files:
-        if relative.is_relative_to(".config/zsh"):
-            destinations[relative] = zsh / relative.relative_to(".config/zsh")
-        elif relative.is_relative_to(".config"):
-            destinations[relative] = config / relative.relative_to(".config")
-        elif relative.is_relative_to(".local/share"):
-            destinations[relative] = data / relative.relative_to(".local/share")
-        else:
-            destinations[relative] = home / relative
-    check_layout([destination_path(path, checkout) for path in destinations.values()])
 
-    staged_home = staging_directory(checkout, home, "home")
-    return [stage_file(files[relative], staged_home / relative, destination)
-            for relative, destination in destinations.items()]
+    def destination(relative):
+        if relative.is_relative_to(".config/zsh"):
+            return zsh / relative.relative_to(".config/zsh")
+        if relative.is_relative_to(".config"):
+            return config / relative.relative_to(".config")
+        if relative.is_relative_to(".local/share"):
+            return data / relative.relative_to(".local/share")
+        return home / relative
+
+    # A previous staging tree may itself contain the misconfigured destination.
+    # Reject it before removing or writing any of that tree.
+    check_layout([destination_path(destination(relative), checkout) for relative in files])
+    archives = []
+    if manifest and manifest.is_file():
+        with manifest.open("rb") as stream:
+            archives = tomllib.load(stream)["archive"]
+        for archive in archives:
+            relative = Path(archive["destination"])
+            if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+                raise InstallError(f"Invalid archive destination: {relative}")
+            # Directory mappings must also validate the directory itself.
+            probe = relative if "member" in archive else relative / ".lixx-directory"
+            destination_path(destination(probe), checkout)
+    staged = staging_directory(checkout, home, "home")
+    assets = [stage_file(source, staged / relative, destination(relative))
+              for relative, source in files.items()]
+    for relative, (file, executable) in staged_archives(archives, staged).items():
+        assets.append(Asset(file, destination(relative), read_contents(file), executable))
+    retired_list = trees[0].parent / "retired.sha256"
+    if retired_list.is_file():
+        known = {}
+        for line in retired_list.read_text().splitlines():
+            if not line or line.startswith("#"):
+                continue
+            digest, name = line.split(None, 1)
+            relative = Path(name)
+            if not re.fullmatch(r"[a-f0-9]{64}", digest) or relative.is_absolute() or ".." in relative.parts:
+                raise InstallError(f"Invalid retired file in {retired_list}")
+            known.setdefault(relative, set()).add(digest)
+        for relative, hashes in known.items():
+            path = destination(relative)
+            if path.is_file() and not path.is_symlink():
+                assets.append(Retired(Path(os.devnull), path, Contents(0, hashlib.sha256(b"").hexdigest()),
+                                      known_hashes=frozenset(hashes)))
+    check_layout([destination_path(asset.destination, checkout) for asset in assets])
+    return assets
 
 
 def inspect_destination(asset, checkout):
@@ -209,14 +308,21 @@ def show_difference(asset, installed):
 
 
 def review_file(asset, installed):
-    if installed.contents is None:
+    if isinstance(asset, Retired):
+        if installed.contents is None:
+            return "match"
+        if installed.link is not None or installed.contents.sha256 not in asset.known_hashes:
+            print(f"Keeping locally changed former file {installed.path}")
+            return "keep"
+    elif installed.contents is None:
         return "yes"
-    if (installed.link is None and installed.contents == asset.contents
+    if (not isinstance(asset, Retired) and installed.link is None and installed.contents == asset.contents
             and (not asset.executable or installed.mode & stat.S_IXUSR)):
         return "match"
     show_difference(asset, installed)
     while True:
-        answer = input("Replace? [yes/skip/cancel] ").strip().lower()
+        action = "Remove" if isinstance(asset, Retired) else "Replace"
+        answer = input(f"{action}? [yes/skip/cancel] ").strip().lower()
         if answer in ("yes", "skip"):
             return answer
         if answer == "cancel":
@@ -419,7 +525,7 @@ def install(completed):
             requested = SYSTEM_ROOT / relative
             if destination_path(requested, checkout) != requested:
                 raise InstallError(f"System directory must be at {requested.parent}")
-        home_assets = stage_home(checkout, home, trees)
+        home_assets = stage_home(checkout, home, trees, profile / "archives.toml")
         packages = package_requirements(profile)
         apt_assets, system_assets = stage_root(checkout, home, root_files)
         decisions = {}
@@ -435,6 +541,8 @@ def install(completed):
         mask = os.umask(0o077)
         os.umask(mask)
         for asset, reviewed in pending:
+            if isinstance(asset, Retired):
+                continue
             if asset in system_assets:
                 install_root_file(asset, reviewed, checkout)
             else:
@@ -442,6 +550,21 @@ def install(completed):
                 install_file(asset, reviewed, checkout, create_mode)
             completed.append(reviewed.path)
             print(f"Installed {reviewed.path}", flush=True)
+        # A running manager may still have the old ExecStart cached. Reload
+        # accepted unit files before retiring their former executables.
+        runtime = os.environ.get("XDG_RUNTIME_DIR")
+        if (runtime and (Path(runtime) / "bus").is_socket()
+                and any(asset.staged.is_relative_to(checkout / "tree/home/.config/systemd/user")
+                        for asset, _ in pending)):
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+        # Keep the old entry points if the user kept an earlier configuration.
+        if not any(choice == "skip" for asset, (_, choice) in decisions.items() if not isinstance(asset, Retired)):
+            for asset, reviewed in pending:
+                if isinstance(asset, Retired):
+                    if inspect_destination(asset, checkout) != reviewed:
+                        raise InstallError(f"Former file changed after review: {reviewed.path}")
+                    reviewed.path.unlink()
+                    print(f"Removed {reviewed.path}", flush=True)
         print(f"Files installed: {len(completed)}")
         print("From a local TTY, start the desktop with: uwsm start -- hyprland.desktop")
         print("Super+Return opens Ghostty. Super+Space opens the app launcher.")

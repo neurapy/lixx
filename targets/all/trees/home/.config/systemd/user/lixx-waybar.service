@@ -7,7 +7,7 @@ After=wayland-wm@hyprland.desktop.service wayland-session-waitenv.service swaync
 
 [Service]
 Type=exec
-ExecStart=%h/.local/bin/lixx-waybar
+ExecStart=%D/lixx-system/bin/lixx-waybar
 Restart=on-failure
 RestartSec=2
 Slice=app.slice

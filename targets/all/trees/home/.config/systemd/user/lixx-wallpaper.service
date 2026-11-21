@@ -4,5 +4,7 @@ PartOf=wayland-session@hyprland.desktop.target
 After=wayland-wm@hyprland.desktop.service wayland-session-waitenv.service
 
 [Service]
-ExecStart=/usr/bin/swaybg -i %E/hypr/wallpaper.png -m fill
+ExecStart=%D/lixx-system/bin/lixx-wallpaper
+Restart=on-failure
+RestartSec=2
 Slice=background.slice

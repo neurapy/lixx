@@ -1,0 +1,11 @@
+[Unit]
+Description=Elephant for the Lixx desktop
+PartOf=wayland-session@hyprland.desktop.target
+After=wayland-wm@hyprland.desktop.service wayland-session-waitenv.service
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/env "PATH=%D/lixx-system/libexec/elephant:${PATH}" %h/.local/bin/elephant
+Restart=on-failure
+RestartSec=2
+Slice=app.slice

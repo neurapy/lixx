@@ -1,9 +1,11 @@
+import hashlib
 import importlib.util
 import io
 import json
 import os
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -76,6 +78,30 @@ class SystemInstallTests(unittest.TestCase):
         self.pref = self.apt / "preferences.d/lixx-hyprland.pref"
         self.source = self.apt / "sources.list.d/lixx-hyprland.sources"
         self.home_file = self.home / "desktop-file"
+
+    def test_release_program_uses_reviewed_bytes_and_required_executable_mode(self):
+        cache = self.checkout / "tree/downloads"
+        cache.mkdir(parents=True)
+        tar_path = cache / "release"
+        body = b"#!/bin/sh\necho works\n"
+        with tarfile.open(tar_path, "w:gz") as archive:
+            entry = tarfile.TarInfo("program")
+            entry.size = len(body)
+            entry.mode = 0o644
+            archive.addfile(entry, io.BytesIO(body))
+        digest = hashlib.sha256(tar_path.read_bytes()).hexdigest()
+        tar_path.rename(cache / digest)
+        (self.profile / "archives.toml").write_text(
+            f'[[archive]]\nurl="https://example.invalid/release"\nsha256="{digest}"\n'
+            'member="program"\ndestination=".local/bin/program"\nexecutable=true\n'
+        )
+        lixx.install([])
+        out = self.home / ".local/bin/program"
+        self.assertEqual(subprocess.check_output([out], text=True), "works\n")
+        out.write_text("local edit")
+        with patch("builtins.input", return_value="skip"):
+            lixx.install([])
+        self.assertEqual(out.read_text(), "local edit")
 
     def apt_calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()]

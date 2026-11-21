@@ -3,7 +3,14 @@ typeset -g ZSH_CONFIG_DIR="${ZDOTDIR:-${XDG_CONFIG_HOME:-$HOME/.config}/zsh}"
 typeset -g ZSH_HAS_TERMINAL=0
 [[ -t 0 || -t 1 || -t 2 ]] && ZSH_HAS_TERMINAL=1
 
-typeset -g ZSH="${ZSH:-$ZSH_CONFIG_DIR/oh-my-zsh}"
+if [[ -z $ZSH ]]; then
+    if [[ -r "$ZSH_CONFIG_DIR/oh-my-zsh/oh-my-zsh.sh" ]]; then
+        ZSH="$ZSH_CONFIG_DIR/oh-my-zsh"
+    else
+        ZSH="${XDG_DATA_HOME:-$HOME/.local/share}/lixx-system/zsh/oh-my-zsh"
+    fi
+fi
+typeset -g ZSH_CACHE_DIR="${ZSH_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/oh-my-zsh}"
 instant_prompt="${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
 if (( ZSH_HAS_TERMINAL )) && [[ -r "$ZSH/oh-my-zsh.sh" && -r "$instant_prompt" ]]; then
     source "$instant_prompt"
@@ -38,7 +45,7 @@ if (( $+functions[p10k] )) && [[ -r "$ZSH_CONFIG_DIR/.p10k.zsh" ]]; then
 fi
 
 typeset -U path
-path=("$HOME/.local/bin" "${path[@]}")
+path=("${XDG_DATA_HOME:-$HOME/.local/share}/lixx-system/bin" "$HOME/.local/bin" "${path[@]}")
 if [[ -r "$HOME/.local/bin/env" ]]; then
     source "$HOME/.local/bin/env"
 fi

@@ -1,0 +1,13 @@
+[Unit]
+Description=Lixx GTK and desktop portal appearance
+PartOf=wayland-session@hyprland.desktop.target
+After=wayland-session-waitenv.service
+Before=walker.service lixx-waybar.service swaync.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/gsettings set org.gnome.desktop.interface gtk-theme Adwaita-dark
+ExecStart=/usr/bin/gsettings set org.gnome.desktop.interface color-scheme prefer-dark
+ExecStart=/usr/bin/gsettings set org.gnome.desktop.interface icon-theme Yaru-purple
+ExecStart=/usr/bin/gsettings set org.gnome.desktop.interface font-name "JetBrainsMonoNL Nerd Font Propo Medium 11"
+RemainAfterExit=yes

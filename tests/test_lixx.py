@@ -119,6 +119,36 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("install", result.stderr)
         self.assertFalse((self.checkout / "tree").exists())
 
+    def test_runtime_tools_are_installed_under_the_xdg_data_home(self):
+        data = self.root / "user data"
+        self.env["XDG_DATA_HOME"] = str(data)
+        path = Path("lixx-system/bin/lixx-example")
+        source = self.assets / ".local/share" / path
+        write(source, "#!/bin/sh\necho installed\n")
+        source.chmod(0o755)
+        self.assertEqual(self.cli().returncode, 0)
+        installed = data / path
+        self.checkout.rename(self.root / "moved checkout")
+        self.assertFalse(installed.is_symlink())
+        self.assertEqual(subprocess.check_output([installed], text=True), "installed\n")
+
+    def test_retirement_requires_consent_and_preserves_modified_copies(self):
+        old = self.home / ".local/bin/former"
+        write(old, "old body\n")
+        digest = hashlib.sha256(old.read_bytes()).hexdigest()
+        (self.assets.parent.parent / "retired.sha256").write_text(f"{digest}  .local/bin/former\n")
+        cancelled = self.cli("cancel\n")
+        self.assertIn("Remove?", cancelled.stdout)
+        self.assertTrue(old.exists())
+        self.assertFalse(self.target.exists())
+        self.assertEqual(self.cli("skip\n").returncode, 0)
+        old.write_text("personal change\n")
+        self.assertEqual(self.cli().returncode, 0)
+        self.assertTrue(old.is_file())
+        old.write_text("old body\n")
+        self.assertEqual(self.cli("yes\n").returncode, 0)
+        self.assertFalse(old.exists())
+
     def test_terminal_review_uses_git_colors_and_preserves_file_details(self):
         write(self.target, "installed line\n")
         self.target.chmod(0o755)
@@ -248,7 +278,7 @@ class InstallerTests(unittest.TestCase):
         command = ('[[ $ZSH_CONFIG_DIR == "$ZDOTDIR" && '
                    '$HISTSIZE == 200000 && -o extended_glob && -o glob_dots && '
                    '$HISTFILE == "$XDG_STATE_HOME/zsh/history" && -d ${HISTFILE:h} && '
-                   '$path[1] == "$HOME/.local/bin" && -n $functions[compdef] ]]')
+                   '$path[1] == "${XDG_DATA_HOME:-$HOME/.local/share}/lixx-system/bin" && -n $functions[compdef] ]]')
         master, slave = pty.openpty()
         with os.fdopen(master, "rb"), os.fdopen(slave, "rb") as terminal:
             result = subprocess.run(["zsh", "-ic", command], env=self.env, cwd=self.home, stdin=terminal,

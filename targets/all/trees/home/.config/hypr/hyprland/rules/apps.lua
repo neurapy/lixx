@@ -42,7 +42,7 @@ rule.window({
     {
         name = "floating-app-tags",
         match = {
-            class = "(org.omarchy.bluetui|org.omarchy.impala|org.omarchy.wiremix|org.omarchy.btop|org.omarchy.terminal|org.omarchy.bash|org.gnome.NautilusPreviewer|org.gnome.Evince|com.gabm.satty|Omarchy|About|TUI.float|imv|mpv)",
+            class = "(org[.]lixx[.](bluetooth|wifi|audio|activity)|org.gnome.NautilusPreviewer|org.gnome.Evince|com.gabm.satty|About|TUI.float|imv|mpv)",
         },
         tag = "+floating-window",
     },
@@ -56,9 +56,6 @@ rule.window({
     },
     { name = "calculator-float", match = { class = "org.gnome.Calculator" }, float = true },
 
-    { name = "screensaver-fullscreen", match = { class = "org.omarchy.screensaver" }, fullscreen = true },
-    { name = "screensaver-float", match = { class = "org.omarchy.screensaver" }, float = true },
-    { name = "screensaver-animation", match = { class = "org.omarchy.screensaver" }, animation = "slide" },
     {
         name = "media-no-opacity-tag",
         match = { class = "^(zoom|vlc|mpv|org.kde.kdenlive|com.obsproject.Studio|com.github.PintaProject.Pinta|imv|org.gnome.NautilusPreviewer)$" },

@@ -1,0 +1,77 @@
+#!/usr/bin/python3
+"""Select a wallpaper for both the desktop and the lock screen."""
+import argparse
+import filecmp
+import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
+CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "hypr"
+DEFAULT = CONFIG / "wallpaper.png"
+SELECTED = CONFIG / "selected-wallpaper"
+EXTENSIONS = {".png", ".jpeg", ".jpg", ".webp", ".bmp", ".gif"}
+
+
+def wallpapers():
+    pictures = subprocess.check_output(["xdg-user-dir", "PICTURES"], text=True).strip()
+    roots = [Path(pictures) / "Wallpapers", Path("/usr/share/backgrounds")]
+    images = [DEFAULT]
+    for root in roots:
+        if root.is_dir():
+            images.extend(sorted((p for p in root.iterdir() if p.is_file()
+                                  and p.suffix.lower() in EXTENSIONS and "\n" not in str(p)),
+                                 key=lambda p: p.name.casefold()))
+    return images
+
+
+def select(source):
+    import gi
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+    if not source.is_file() or not GdkPixbuf.Pixbuf.get_file_info(str(source))[0]:
+        raise ValueError(f"Unreadable wallpaper: {source}")
+    with tempfile.NamedTemporaryFile(dir=CONFIG, prefix=".wallpaper-", delete=False) as output:
+        temporary = Path(output.name)
+    try:
+        shutil.copyfile(source, temporary)
+        os.replace(temporary, SELECTED)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", choices=["show", "init", "set", "next", "choose", "list"], nargs="?", default="show")
+    parser.add_argument("image", nargs="?", type=Path)
+    args = parser.parse_args()
+    if (args.action == "set") != (args.image is not None):
+        parser.error("set takes exactly one image path")
+    if args.action == "list":
+        print(*wallpapers(), sep="\n")
+    elif args.action == "choose":
+        os.execlp("walker", "walker", "-m", "menus:lixx-wallpapers")
+    elif args.action in ("show", "init"):
+        if SELECTED.is_symlink() and SELECTED.is_file():
+            select(SELECTED)
+        elif not SELECTED.is_file():
+            select(DEFAULT)
+        if args.action == "show":
+            os.execlp("swaybg", "swaybg", "-i", str(SELECTED), "-m", "fill")
+    else:
+        source = args.image
+        if args.action == "next":
+            images = wallpapers()
+            index = next((i for i, p in enumerate(images)
+                          if SELECTED.is_file() and filecmp.cmp(p, SELECTED, shallow=False)), -1)
+            source = images[(index + 1) % len(images)]
+        select(source)
+        subprocess.run(["systemctl", "--user", "try-restart", "lixx-wallpaper.service"], check=True)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        raise SystemExit(str(error))

@@ -1,0 +1,28 @@
+#!/usr/bin/python3
+"""Open Ghostty in the active terminal shell's directory."""
+import json
+import os
+import subprocess
+from pathlib import Path
+
+
+def active_directory():
+    window = json.loads(subprocess.check_output(["hyprctl", "-j", "activewindow"]))
+    if not window.get("pid"):
+        return Path.home()
+    shells = Path("/etc/shells").read_text().splitlines()
+    processes = [int(window["pid"])]
+    while processes:
+        pid = processes.pop()
+        proc = Path("/proc") / str(pid)
+        try:
+            if str((proc / "exe").resolve(strict=True)) in shells:
+                return (proc / "cwd").resolve(strict=True)
+            processes.extend(map(int, (proc / f"task/{pid}/children").read_text().split()))
+        except (FileNotFoundError, PermissionError):
+            continue
+    return Path.home()
+
+
+if __name__ == "__main__":
+    os.execlp("uwsm-app", "uwsm-app", "--", "ghostty", "+new-window", "--dir=" + str(active_directory()))

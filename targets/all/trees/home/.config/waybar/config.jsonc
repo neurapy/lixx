@@ -5,7 +5,7 @@
   "spacing": 0,
   "height": 26,
   "modules-left": [
-    "custom/omarchy",
+    "custom/lixx",
     "hyprland/workspaces"
   ],
   "modules-center": [
@@ -49,30 +49,30 @@
       "5": []
     }
   },
-  "custom/omarchy": {
+  "custom/lixx": {
     "format": "🐧",
-    "on-click": "if command -v omarchy-menu >/dev/null; then exec omarchy-menu; else exec fuzzel --launch-prefix='uwsm-app --'; fi",
+    "on-click": "lixx-menu",
     "on-click-right": "uwsm-app -- ghostty",
-    "tooltip-format": "Desktop menu\n\nSuper + Alt + Space"
+    "tooltip-format": "Lixx menu\n\nSuper + Alt + Space"
   },
   "custom/pomodoro": {
     "format": "{}",
     "return-type": "json",
-    "exec": "\"$HOME/.local/bin/lixx-pomodoro\"",
-    "on-click": "\"$HOME/.local/bin/lixx-pomodoro\" toggle",
-    "on-click-right": "\"$HOME/.local/bin/lixx-pomodoro\" reset",
+    "exec": "lixx-pomodoro",
+    "on-click": "lixx-pomodoro toggle",
+    "on-click-right": "lixx-pomodoro reset",
     "exec-on-event": false
   },
   "cpu": {
     "interval": 5,
     "format": "󰍛",
-    "on-click": "uwsm-app -- ghostty -e btop"
+    "on-click": "lixx-menu activity"
   },
   "clock": {
     "format": "{:L%A %H:%M}",
     "format-alt": "{:L%d %B W%V %Y}",
     "tooltip": false,
-    "on-click-right": "if command -v omarchy-tz-select >/dev/null; then exec uwsm-app -- ghostty -e omarchy-tz-select; else exec uwsm-app -- ghostty -e timedatectl list-timezones; fi"
+    "on-click-right": "lixx-menu timezone"
   },
   "network": {
     "format-icons": [
@@ -91,7 +91,7 @@
     "tooltip-format-disconnected": "Disconnected",
     "interval": 3,
     "spacing": 1,
-    "on-click": "uwsm-app -- ghostty -e nmtui"
+    "on-click": "lixx-menu wifi"
   },
   "battery": {
     "format": "{capacity}% {icon}",
@@ -128,7 +128,7 @@
     "tooltip-format-discharging": "{power:>1.0f}W↓ {capacity}%",
     "tooltip-format-charging": "{power:>1.0f}W↑ {capacity}%",
     "interval": 5,
-    "on-click": "if command -v omarchy-menu >/dev/null; then exec omarchy-menu power; else exec uwsm-app -- ghostty --wait-after-command -e upower -d; fi",
+    "on-click": "lixx-menu power",
     "states": {
       "warning": 20,
       "critical": 10
@@ -141,11 +141,11 @@
     "format-connected": "󰂱",
     "format-no-controller": "",
     "tooltip-format": "Devices connected: {num_connections}",
-    "on-click": "uwsm-app -- ghostty -e bluetoothctl"
+    "on-click": "lixx-menu bluetooth"
   },
   "pulseaudio": {
     "format": "{icon}",
-    "on-click": "uwsm-app -- pavucontrol",
+    "on-click": "lixx-menu audio",
     "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
     "tooltip-format": "Playing at {volume}%",
     "scroll-step": 5,
@@ -176,14 +176,14 @@
     "tooltip": false
   },
   "custom/screenrecording-indicator": {
-    "on-click": "omarchy-cmd-screenrecord",
-    "exec": "if pgrep -f '^([^ ]*/)?gpu-screen-recorder( |$)' >/dev/null; then echo '{\"text\":\"󰻂\",\"tooltip\":\"Stop recording\",\"class\":\"active\"}'; else echo '{\"text\":\"\"}'; fi",
+    "on-click": "lixx-capture stop",
+    "exec": "lixx-capture status",
     "signal": 8,
     "return-type": "json",
-    "exec-if": "command -v gpu-screen-recorder && command -v omarchy-cmd-screenrecord"
+    "exec-on-event": false
   },
   "custom/voxtype": {
-    "exec": "omarchy-voxtype-status",
+    "exec": "voxtype status --follow --extended --format json | jq --unbuffered -c '. + {alt: .class}'",
     "return-type": "json",
     "format": "{icon}",
     "format-icons": {
@@ -192,13 +192,12 @@
       "transcribing": "󰔟"
     },
     "tooltip": true,
-    "on-click-right": "omarchy-voxtype-config",
-    "on-click": "omarchy-voxtype-model",
-    "exec-if": "command -v voxtype && command -v omarchy-voxtype-status"
+    "on-click-right": "uwsm-app -- ghostty -e voxtype --help",
+    "on-click": "voxtype record toggle"
   },
   "custom/idle-indicator": {
-    "on-click": "\"$HOME/.local/bin/lixx-idle\" toggle",
-    "exec": "\"$HOME/.local/bin/lixx-idle\"",
+    "on-click": "lixx-idle toggle",
+    "exec": "lixx-idle",
     "signal": 9,
     "return-type": "json",
     "exec-on-event": false

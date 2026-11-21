@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+# Keep a second lock request from changing the keyboard backlight restore point.
+exec 9>"$XDG_RUNTIME_DIR/lixx-lock"
+flock -n 9 || exit 0
+lixx-wallpaper init
+hyprctl switchxkblayout all 0 >/dev/null
+if pgrep -u "$(id -u)" -x 1password >/dev/null; then 1password --lock & fi
+config=${XDG_CONFIG_HOME:-"$HOME/.config"}/hypr/hyprlock.conf
+if busctl --system --timeout=2s call net.reactivated.Fprint /net/reactivated/Fprint/Manager net.reactivated.Fprint.Manager GetDefaultDevice >/dev/null 2>&1; then
+    config=${XDG_CONFIG_HOME:-"$HOME/.config"}/hypr/hyprlock-fingerprint.conf
+fi
+hyprlock --config "$config" &
+locker=$!
+# Power down the display once locked. Hyprland wakes it on pointer or key input.
+(
+    sleep 3
+    kill -0 "$locker" 2>/dev/null || exit 1
+    hyprctl dispatch 'hl.dsp.dpms({ action = "off" })' >/dev/null
+    for led in /sys/class/leds/*::kbd_backlight; do
+        [ -e "$led" ] && brightnessctl -q -d "${led##*/}" -s set 0 || :
+    done
+) &
+timer=$!
+wait "$locker" || :
+kill "$timer" 2>/dev/null || :
+if wait "$timer" 2>/dev/null; then
+    for led in /sys/class/leds/*::kbd_backlight; do
+        [ -e "$led" ] && brightnessctl -q -d "${led##*/}" -r || :
+    done
+fi
+hyprctl dispatch 'hl.dsp.dpms({ action = "on" })' >/dev/null

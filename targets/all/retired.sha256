@@ -1,0 +1,10 @@
+# Exact former files replaced by the session services and installed runtime.
+5cb9874eedbcb32c7b121ea60f6433f881499247cac7e6473a9a93adeebc3aa7  .config/autostart/walker.desktop
+ba4e8adff5a1e2a8973d52da586197de6ac3450c2583a60ed85b52a680516c64  .config/hypr/battery_events.py
+8ecb96869881a87194f921920671c8f602b18ec65cb113abb75c271264be9e48  .config/waybar/colors.css
+5652356b084dc86a840179270b2cf0012f3c1edd0b905fe6f7d858697a5f10c8  .local/bin/lixx-idle
+6aa5b3b821b36541f31d927acc6ed674ffca4fa613a5fac6a18de85b69dc585c  .local/bin/lixx-idle
+3f2cef6c6b8050dcfcd19def6ce899b1f6a0ace5ee054644dfd76db12737e652  .local/bin/lixx-pomodoro
+a1578a7d4f4c745d6fc1965c45c49236524a1b2c0a47492491fbf827ffc3533b  .local/bin/lixx-wallpaper
+ce8abd78d2546b173fbac74e1682642ecd9d799b51d31b770ebfeae1d56c0838  .local/bin/lixx-waybar
+e1e09b7526abc42831787f7649ab4b7ffb0c62cf2d1c7b976accdee2136736ac  .local/bin/lixx-waybar

@@ -4,6 +4,8 @@ import json
 import os
 import shutil
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 
 def has_battery(power_supply):
@@ -31,12 +33,16 @@ def bar_config(config, devices):
         settings["battery"] = {"hosts": []}
     if not any((devices / "bluetooth").glob("hci[0-9]*")):
         settings["bluetooth"] = {"hosts": []}
-    if not (shutil.which("voxtype") and shutil.which("omarchy-voxtype-status")):
+    if not shutil.which("voxtype"):
         settings["custom/voxtype"] = {"hosts": []}
     return settings
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["toggle"]:
+        unit = "lixx-waybar.service"
+        active = subprocess.run(["systemctl", "--user", "is-active", "--quiet", unit]).returncode == 0
+        os.execlp("systemctl", "systemctl", "--user", "stop" if active else "start", unit)
     config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "waybar"
     runtime = Path(os.environ["XDG_RUNTIME_DIR"]) / "lixx-waybar"
     runtime.mkdir(mode=0o700, exist_ok=True)

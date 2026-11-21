@@ -1,0 +1,12 @@
+[Unit]
+Description=Walker for the Lixx desktop
+PartOf=wayland-session@hyprland.desktop.target
+After=wayland-wm@hyprland.desktop.service wayland-session-waitenv.service elephant.service
+Wants=elephant.service
+
+[Service]
+Type=exec
+ExecStart=%h/.local/bin/walker --gapplication-service
+Restart=on-failure
+RestartSec=2
+Slice=app.slice

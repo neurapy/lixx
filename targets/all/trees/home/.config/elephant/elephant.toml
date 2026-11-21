@@ -1,0 +1,2 @@
+launch_prefix = "uwsm-app --"
+terminal_cmd = "ghostty -e"

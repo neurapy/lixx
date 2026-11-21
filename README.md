@@ -1,6 +1,6 @@
 # Lixx
 
-This project is the installer and updater for my Ubuntu-based desktop. I will move away from Omarchy step by step and make my own native system.
+Lixx installs and updates a Hyprland desktop on Ubuntu 26.04. The installer runs from this checkout. The installed Lixx commands live in `~/.local/share/lixx-system/bin/`.
 
 The repo holds the source configs, native program sources and installation rules. The desktop uses regular files copied to their final locations. Moving or deleting the checkout after installation must leave the desktop fully usable.
 
@@ -32,7 +32,7 @@ The target can also be selected explicitly with `./vm/run ubuntu-26.04`. Each pr
 
 ## Install from a TTY
 
-Start with **Ubuntu Server or Desktop 26.04 LTS on amd64**, an ordinary login account with sudo, and network access to Ubuntu's archives (including `universe`), the Hyprland PPA and Debian Snapshot for the UWSM download. The installer uses Ubuntu's Python 3, Git and APT. For a clean VM, select Ubuntu Server and give it a 3D-capable virtual display. QEMU/KVM with VirtIO graphics and VirGL is the tested configuration.
+Start with **Ubuntu Server or Desktop 26.04 LTS on amd64**, an ordinary login account with sudo, and network access to Ubuntu's archives (including `universe`), the Hyprland PPA Debian Snapshot for UWSM, and GitHub releases and source archives for Walker, Elephant and Zsh. The installer uses Ubuntu's Python 3, Git and APT. For a clean VM, select Ubuntu Server and give it a 3D-capable virtual display. QEMU/KVM with VirtIO graphics and VirGL is the tested configuration.
 
 Log in at a local TTY in the VM window, open the Lixx checkout and run these commands as the desktop user. The first command uses sudo for system files and APT, which shows its package transaction. The second starts the desktop on that seat. Use the same start command on subsequent logins.
 
@@ -41,7 +41,7 @@ Log in at a local TTY in the VM window, open the Lixx checkout and run these com
 uwsm start -- hyprland.desktop
 ```
 
-**Super+Return** opens Ghostty running Zsh, **Super+Space** opens the application launcher, and **Super+W** closes the focused window. **Super+1** through **Super+0** select workspaces. **Super+Shift+E** ends the session and returns to the TTY.
+**Super+Return** opens Ghostty running Zsh, **Super+Space** opens the application launcher, and **Super+W** closes the focused window. **Super+1** through **Super+0** select workspaces. **Super+Shift+E** opens the logout confirmation and returns to the TTY after confirmation.
 
 The session loads the workstation's modular Hyprland config, wallpaper, JetBrainsMono Nerd Font and 26-pixel Waybar. UWSM starts the bar, wallpaper, battery listener, idle lock, notification daemon and media controls. Waybar shows five persistent workspaces and the Pomodoro timer. Left-click the timer to start or pause it and right-click to reset it.
 
@@ -55,16 +55,19 @@ targets/
     home/
       .zshenv
       .config/hypr/     Hyprland config, modules and wallpaper
-      .config/waybar/   Bar layout, CSS and colors
+      .config/waybar/   Bar layout and CSS
+      .config/walker/   Launcher settings and fixed Catppuccin style
+      .config/elephant/ Provider settings and wallpaper menu
       .config/zsh/
       .config/systemd/user/
-      .local/bin/       Session helpers
+      .local/share/lixx-system/bin/   Lixx programs
       .local/share/fonts/JetBrainsMonoNerd/
     root/               Shared system files, relative to /
   ubuntu-26.04/
     tree/root/etc/apt/  Ubuntu's APT source and preferences
     packages.txt        Direct package requirements
     packages.sha256     Checksums and URLs of additional .deb packages
+    archives.toml       Pinned user-space releases and archive members
     vm.toml             Clean base image for the preview
 vm/run                  Boot and install a disposable preview from this checkout
 lixx                    Desktop installer
@@ -73,31 +76,35 @@ tree/                   Disposable, gitignored staging directory
 
 Put desktop defaults in `targets/all/trees/` and distro-specific additions or replacements in `targets/<id>-<version>/tree/`. Both trees mirror the destination. Paths under `home/` start at the user's home directory and paths under `root/` start at `/`. Lixx selects the target using `ID` and `VERSION_ID` from `/etc/os-release`.
 
-Directories merge. For example, add `targets/ubuntu-26.04/tree/home/.config/waybar/style.css` to replace the shared stylesheet on Ubuntu. The shared `config.jsonc` and `colors.css` still install alongside it. Lixx compares the installed stylesheet once against the Ubuntu copy. A file and directory at the same relative path cause an error before installation.
+Directories merge. For example, add `targets/ubuntu-26.04/tree/home/.config/waybar/style.css` to replace the shared stylesheet on Ubuntu. The shared `config.jsonc` installs alongside it. Lixx compares the installed stylesheet once against the Ubuntu copy. A file and directory at the same relative path cause an error before installation.
 
 `home/.config/` and `home/.local/share/` follow absolute `XDG_CONFIG_HOME` and `XDG_DATA_HOME` values. `home/.config/zsh/` follows the account's exported `ZDOTDIR` when set. The supplied `~/.zshenv` locates the installed Zsh configuration on a fresh account. Existing startup files get the same review as any other config.
 
-Ghostty uses the workstation's split, tab, clipboard and font settings. Its optional Omarchy color theme loads on accounts that have it. A clean account gets Zsh completion, Vi bindings, zoxide directory jumping and fzf history search. An existing account can also use its Oh My Zsh plugins, Powerlevel10k settings, `env.zsh` and function files.
+## Installed desktop
 
-Each run rebuilds the merged `tree/home/` and `tree/root/` in the checkout. Lixx copies regular files and creates parent directories as needed. For system files, use the canonical parent path, such as `root/usr/bin/`. A `.gitkeep` directly inside a source `home/` or `root/` only keeps the empty directory in Git.
+The workstation's Catppuccin colors are embedded in Ghostty, Waybar, Walker, SwayNC and Hyprlock. GTK apps and the desktop portal use the workstation’s Adwaita dark preference, Yaru-purple icons and JetBrains UI font. Ghostty keeps the workstation's font, splits, tabs and clipboard bindings. Zsh loads the workstation's Powerlevel10k prompt and plugins, including fzf-tab, autosuggestions and Vi mode. The installer stages pinned upstream sources for a fresh account. Existing accounts can keep an independent Oh My Zsh installation, personal functions and private `env.zsh`.
 
-Future builds under `programs/<name>/` can emit files into the same staging layout, with a proposed `install.toml` describing outputs and required modes. The current battery listener runs from `hypr/battery_events.py` in the installed config directory. A native implementation can replace its `ExecStart` under the same `hypr-battery-events.service` name.
+| Shortcut | Action |
+| --- | --- |
+| Super+Space | Search applications with Walker |
+| Super+Alt+Space | Open the Lixx desktop menu |
+| Super+Ctrl+V / Super+Ctrl+E | Open clipboard history / symbols |
+| Super+Ctrl+Space | Preview and choose a wallpaper |
+| Super+Ctrl+Shift+Space | Cycle to the next wallpaper |
+| Print / Alt+Print | Copy and save a screenshot / start or stop a recording |
+| Super+Ctrl+C | Open capture tools, including annotation and text recognition |
+| Super+Shift+/ | Search the installed Hyprland key bindings |
+| Super+Escape | Open lock, suspend and session controls |
 
-Hyprland uses each output's preferred mode. It reads optional `monitors.lua` and `local.lua` from the installed Hypr config directory after the shared modules. Omarchy shortcuts, the SPF file manager workspace and HyprStudy activate when their respective tools are installed. HyprStudy also needs `hyprstudy/settings.toml` in the user's config directory.
+Accounts that hide suspend in the system menu can keep an empty `$XDG_STATE_HOME/lixx/suspend-off` file.
 
-The Waybar service starts `~/.local/bin/lixx-waybar`. It includes the installed `waybar/config.jsonc` and selects battery, Bluetooth and dictation modules according to the available devices and commands. The selection lives under `$XDG_RUNTIME_DIR`. Run `systemctl --user restart lixx-waybar.service` to recheck after adding hardware or installing Voxtype. WirePlumber starts its packaged Bluetooth and camera monitors when a device appears.
+The wallpaper picker reads the shipped image, Ubuntu's `/usr/share/backgrounds` and the `Wallpapers` folder in the account's XDG Pictures directory. To use an image elsewhere, run `lixx-wallpaper set "/path/to/image"`. The selector saves a regular copy at `$XDG_CONFIG_HOME/hypr/selected-wallpaper`. The desktop and lock screen use that copy across logins and reinstalls. A fingerprint reader enables Hyprlock's fingerprint option alongside password unlock.
 
-### Workstation differences under review
+UWSM supplies the session PATH to Hyprland and the systemd user manager. Walker and Elephant run as session services. Elephant supplies applications, file search, calculator, clipboard, symbols, web search and menus. Lixx pins the Elephant binary and its Go provider plugins to the same release. On Ubuntu, Elephant uses a private `fd` adapter for the packaged `fdfind` executable. [Walker release](https://github.com/abenz1267/walker/releases/tag/v2.15.2) · [Elephant release](https://github.com/abenz1267/elephant/releases/tag/v2.20.3)
 
-| Area | Working setup | Clean install |
-| --- | --- | --- |
-| Theme and lock screen | Omarchy selects the wallpaper and colors for Waybar, Ghostty and Hyprlock. Hyprlock requests CaskaydiaMono and enables fingerprint unlock. Fontconfig currently resolves that request to Noto Sans on the workstation. | Lixx ships the same wallpaper and Waybar palette at fixed paths. Ghostty uses its default colors until a theme is available. Hyprlock uses JetBrainsMono and password authentication. |
-| Idle and resume | `omarchy-system-lock` handles locking. The resume command turns the output on and runs `brightnessctl -r`. | Hypridle launches Hyprlock directly and uses Hyprland's Lua DPMS dispatcher. Resume turns the output on. |
-| Session services | Hyprland launches Waybar, SwayOSD and other clients through its autostart list. | UWSM finalizes the session environment first. Systemd controls service lifetimes, including the wallpaper and bar. WirePlumber activates camera and Bluetooth monitoring when devices appear. |
-| Waybar and shortcuts | Omarchy supplies several click actions, launch-or-focus shortcuts and status indicators. The timer uses `waybar-module-pomodoro`. | Lixx supplies idle and Pomodoro helpers, uses SwayNC for notification status, selects modules by hardware and falls back to Fuzzel. The screenshot shortcut copies a selected region. |
-| Application launching | The terminal shortcut clears input-method variables and requests a new Ghostty window. The Obsidian shortcut focuses an existing window when possible. | Shortcuts inherit the session environment. Firefox, Nautilus and Obsidian bindings activate when their programs are installed. Both configurations launch apps through `uwsm-app`. |
-| Monitors and workspaces | Monique supplies the active monitor file. HyprStudy loads from a personal project checkout. | A preferred-mode rule supports a first boot. Local monitor overrides still load. HyprStudy, SPF and Slack workspaces check for their programs. |
-| Zsh | The account has Oh My Zsh, Powerlevel10k, five third-party plugins, login settings and personal functions. | Lixx ships the public setup and loads the account's extensions when present. Provisioning the framework, theme and plugins is a separate decision. |
+Waybar, Hypridle, the wallpaper and the authentication agent also run as user services. The bar selects its battery, Bluetooth and dictation modules according to available hardware and programs. **Super+Shift+Space** starts or stops `lixx-waybar.service`. The UPower listener runs the installed `lixx-battery-events` program. Monique can supply `hypr/monitors.lua`, and machine-specific integrations can load from `hypr/local.lua`. SPF, Slack and HyprStudy use the account's own applications when available.
+
+The installer rebuilds `tree/home` and `tree/root` for each run. It caches verified upstream archives under `tree/downloads`. Downloaded programs and source files enter the same review and regular-file installation as the static trees. [Pinned archives](targets/ubuntu-26.04/archives.toml) · [Walker layout and style attribution](LICENSES/Omarchy.txt) · [SwayNC stylesheet license](LICENSES/JaKooLit-GPL-3.0.txt)
 
 ## File review during installation
 
@@ -117,7 +124,7 @@ Replace? [yes/skip/cancel]
 
 An existing symlink is a type difference even if its target contains identical bytes. Show the link target. Yes replaces the link itself with a regular file. Skip leaves it visible as an unresolved difference. Resolve each destination's parent and accept only locations outside the checkout and staging tree. This also catches a parent directory linked back into the repo. A directory occupying a file destination is reported as a conflict and its contents are preserved.
 
-After review, recheck the destinations. If a file changed while the user was deciding, review the new difference before applying the plan. Create the necessary parent directories and copy each accepted file to a temporary file beside its destination. Set the file's permissions, then rename it into place. An interrupted run can safely compare the actual files again. Files outside the staged set belong to the user. Any deliberate retirement of a shipped path should be an explicitly reviewed change.
+After review, recheck the destinations. If a file changed while the user was deciding, review the new difference before applying the plan. Create the necessary parent directories and copy each accepted file to a temporary file beside its destination. Set the file's permissions, then rename it into place. An interrupted run can safely compare the actual files again. Known former files listed in `targets/all/retired.sha256` get a deletion diff and a separate removal prompt. Lixx leaves locally modified former files in place. Skipping a replacement keeps the old entry points for that installation. An active user manager reloads updated service definitions before Lixx retires their old executables. On an existing desktop, log out and start UWSM again to load the session PATH and newly added services.
 
 Earlier Lixx installs can still contain `~/.local/bin/lixx-battery-events`, `lixx-battery-events.service` in the user unit directory and `fonts/lixx/` under the data directory. After accepting the updated session target and logging in again, the desktop requests `hypr-battery-events.service`. Fresh installs use the `fonts/JetBrainsMonoNerd/` directory.
 
@@ -148,7 +155,7 @@ Other package differences observed on 2026-11-20 are listed below.
 | Ghostty | 1.3.1 | 1.3.0 with Ubuntu updates. The full workstation config passed validation and opened Zsh with **Super+Return**. |
 | SwayOSD | 0.3.1 in `/usr/local/bin` | Ubuntu's 0.3.0 in `/usr/bin` |
 | hyprland-guiutils, hypridle, hyprsunset | PPA builds carried over on the workstation | Same upstream versions, rebuilt for 26.04 |
-| hyprpolkitagent, adwaita-icon-theme-legacy | The workstation autostart config calls the GNOME PolicyKit agent. Neither package is installed. | The profile installs the Hyprland PolicyKit agent and the legacy GTK icons. |
+| adwaita-icon-theme-legacy | The workstation uses its existing icon themes. | The profile includes the legacy GTK icons. |
 
 Add Deb822 `.sources` under `root/etc/apt/sources.list.d/` and `.pref` files under `root/etc/apt/preferences.d/` in either source tree. Lixx discovers these files after combining the trees. When all of a new source's amd64 package indexes are already configured, Lixx reuses the existing entry and applies the selected package preferences. New APT files are root-owned with mode `0644`.
 
@@ -169,9 +176,11 @@ On a machine with the target sources, preferences and package indexes configured
 
 ## Graphical acceptance test
 
+On 2026-11-21, a fresh Ubuntu 26.04 preview launched Walker and Ghostty from the keyboard after the checkout was moved. The guest queried Elephant’s calculator and clipboard, selected a wallpaper through Walker, copied and saved a screenshot, recorded a video and unlocked with a password. Reinstalling wrote zero files and preserved the selected wallpaper. Earlier previews also exercised graphical PolicyKit authentication and service recovery.
+
 On 2026-11-20, a fresh install of UWSM `0.27.2+ds-1` and upgrades from `0.25.2+ds-1` and `0.26.4-1ppa1` all opened Waybar and Ghostty on Ubuntu 26.04, reported zero Hyprland config errors and logged out to the TTY. Repeating `./lixx install` wrote zero files in each guest. The 0.25 upgrade also worked with the earlier Lixx service override still installed. A separate VM upgraded 0.26.4 during a running session and kept the same compositor process.
 
-On 2026-11-20 a clean Ubuntu Server 26.04 amd64 VM reached Hyprland 0.57.2 from tty1 after the checkout was moved. The recommended-package banner was gone, `hyprctl configerrors` was empty and Waybar 0.16.0 rendered at 1280 × 26 with a clean service journal. Fuzzel launched Ghostty, Hyprlock locked and unlocked, the Pomodoro timer counted down and the battery alert preview worked. The VM also detected a virtual camera and Bluetooth controller. Physical battery discharge requires a laptop. Xwayland's X11 keycode warnings and Aquamarine's nested-backend and libinput diagnostics remain visible in their respective logs on this VM. [Ubuntu Server image](https://cloud-images.ubuntu.com/releases/resolute/release/)
+On 2026-11-20 a clean Ubuntu Server 26.04 amd64 VM reached Hyprland 0.57.2 from tty1 after the checkout was moved. The recommended-package banner was gone, `hyprctl configerrors` was empty and Waybar 0.16.0 rendered at 1280 × 26 with a clean service journal. Ghostty opened, Hyprlock locked and unlocked, the Pomodoro timer counted down and the battery alert preview worked. The VM also detected a virtual camera and Bluetooth controller. Physical battery discharge requires a laptop. Xwayland's X11 keycode warnings and Aquamarine's nested-backend and libinput diagnostics remain visible in their respective logs on this VM. [Ubuntu Server image](https://cloud-images.ubuntu.com/releases/resolute/release/)
 
 For a quick desktop check, use `./vm/run`. To also exercise moving the checkout and reviewing local changes, use the following procedure in a VM you manage.
 
@@ -193,6 +202,6 @@ For a quick desktop check, use `./vm/run`. To also exercise moving the checkout 
    echo "$ZSH_VERSION"
    ```
 
-4. End the session with **Super+Shift+E**. Run `~/lixx-moved/lixx install` again. Matching files should yield `Files installed: 0`. Edit two installed configs and rerun the same command. Answer Yes and Cancel to keep both edits, then repeat with Yes and Skip to apply only the first replacement.
+4. Confirm logout with **Super+Shift+E**. Run `~/lixx-moved/lixx install` again. Matching files should yield `Files installed: 0`. Edit two installed configs and rerun the same command. Answer Yes and Cancel to keep both edits, then repeat with Yes and Skip to apply only the first replacement.
 
 Run `python3 -m unittest discover -s tests -v` from the checkout for the isolated installer tests.

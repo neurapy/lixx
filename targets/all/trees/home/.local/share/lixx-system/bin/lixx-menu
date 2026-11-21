@@ -1,0 +1,147 @@
+#!/usr/bin/python3
+"""Workstation menus and desktop actions, presented by Walker."""
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+
+def choose(title, rows):
+    if not rows:
+        return None
+    result = subprocess.run(["walker", "--dmenu", "--placeholder", title],
+                            input="\n".join(rows) + "\n", text=True, stdout=subprocess.PIPE)
+    selected = result.stdout.rstrip("\n")
+    return selected if result.returncode == 0 and selected in rows else None
+
+
+def run(*command):
+    subprocess.run(command, check=True)
+
+
+def output(*command):
+    return subprocess.check_output(command, text=True).strip()
+
+
+def active(unit):
+    return subprocess.run(["systemctl", "--user", "is-active", "--quiet", unit]).returncode == 0
+
+
+def focus_or_launch(app_id, *command):
+    for client in json.loads(output("hyprctl", "-j", "clients")):
+        if app_id in (client["class"], client["initialClass"]) and client["mapped"]:
+            run("hyprctl", "dispatch", 'hl.dsp.focus({window="address:' + client["address"] + '"})')
+            return
+    run("uwsm-app", "--", *command)
+
+
+def controls(action):
+    app_id = "org.lixx." + action
+    if action in ("wifi", "bluetooth"):
+        subprocess.run(["rfkill", "unblock", action], stderr=subprocess.DEVNULL)
+    if action == "audio" and not shutil.which("wiremix"):
+        focus_or_launch("org.pulseaudio.pavucontrol", "pavucontrol")
+        return
+    program = {"wifi": "nmtui", "bluetooth": "bluetui" if shutil.which("bluetui") else "bluetoothctl",
+               "audio": "wiremix", "activity": "btop"}[action]
+    focus_or_launch(app_id, "ghostty", "--class=" + app_id, "--title=" + program, "-e", program)
+
+
+def show_bindings():
+    rows = []
+    for bind in json.loads(output("hyprctl", "-j", "binds")):
+        mods = [label for bit, label in ((64, "Super"), (4, "Ctrl"), (8, "Alt"), (1, "Shift")) if bind["modmask"] & bit]
+        key = bind["key"] or "code:" + str(bind["keycode"])
+        rows.append(" + ".join([*mods, key]) + "    " + (bind["description"] or bind["dispatcher"]))
+    choose("Key bindings", sorted(rows))
+
+
+# Each action is an argument vector or the name of another menu action.
+MENUS = {
+    "main": {"Applications": ["walker"], "Wallpapers": ["lixx-wallpaper", "choose"], "Capture": "capture",
+             "Toggle": "toggle", "Share": "share", "Key bindings": "bindings", "System": "system"},
+    "system": {"Lock": ["lixx-lock"], "Suspend": "suspend", "Log out": "logout",
+               "Restart": "reboot", "Shut down": "poweroff"},
+    "toggle": {"Top bar": ["lixx-waybar", "toggle"], "Idle lock": ["lixx-idle", "toggle"], "Nightlight": "nightlight",
+               "Silence notifications": ["swaync-client", "--toggle-dnd"],
+               "Window gaps": ["hyprctl", "eval", 'require("lib.windows").gaps()'],
+               "Single-window aspect ratio": ["hyprctl", "eval", 'require("lib.windows").square()'],
+               "Monitor scaling": ["hyprctl", "eval", 'require("lib.windows").scale()']},
+    "capture": {"Copy and save screenshot": ["lixx-capture", "screenshot"], "Annotate screenshot": ["lixx-capture", "annotate"],
+                "Extract text": ["lixx-capture", "text"], "Screen recording": "screenrecord", "Pick a color": ["hyprpicker", "-a"]},
+    "screenrecord": {"Without audio": ["lixx-capture", "record"], "Desktop audio": ["lixx-capture", "record", "desktop"],
+                     "Microphone": ["lixx-capture", "record", "microphone"]},
+    "share": {"Clipboard history": ["walker", "-m", "clipboard"], "Copy a file location": "share-file"},
+    "power": {"Battery details": ["ghostty", "--wait-after-command", "-e", "upower", "-d"], "System": "system"},
+}
+
+
+def main(action):
+    if action == "screenrecord" and active("lixx-recording.service"):
+        run("lixx-capture", "stop")
+    elif action in MENUS:
+        actions = MENUS[action].copy()
+        if action == "system":
+            state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+            if (state / "lixx/suspend-off").exists():
+                del actions["Suspend"]
+        if action == "share" and shutil.which("localsend"):
+            actions["Send with LocalSend"] = ["uwsm-app", "--", "localsend"]
+        if action == "power" and shutil.which("powerprofilesctl"):
+            for profile in ("power-saver", "balanced", "performance"):
+                if profile in output("powerprofilesctl", "list"):
+                    actions[profile] = ["powerprofilesctl", "set", profile]
+        selected = choose("Lixx" if action == "main" else action.capitalize(), actions)
+        if selected:
+            command = actions[selected]
+            if isinstance(command, str):
+                main(command)
+            else:
+                run(*command)
+    elif action in ("wifi", "bluetooth", "audio", "activity"):
+        controls(action)
+    elif action == "audio-next":
+        sinks = json.loads(output("pactl", "--format=json", "list", "sinks"))
+        if sinks:
+            names = [sink["name"] for sink in sinks]
+            current = output("pactl", "get-default-sink")
+            sink = sinks[(names.index(current) + 1) % len(sinks)] if current in names else sinks[0]
+            run("pactl", "set-default-sink", sink["name"])
+            for stream in json.loads(output("pactl", "--format=json", "list", "sink-inputs")):
+                run("pactl", "move-sink-input", str(stream["index"]), sink["name"])
+            run("notify-send", "Audio output", sink["description"])
+    elif action == "timezone":
+        zone = choose("Time zone", output("timedatectl", "list-timezones").splitlines())
+        if zone:
+            run("timedatectl", "set-timezone", zone)
+    elif action == "share-file":
+        result = subprocess.run(["zenity", "--file-selection"], text=True, stdout=subprocess.PIPE)
+        if result.returncode == 0:
+            subprocess.run(["wl-copy", "--type", "text/uri-list"], input=Path(result.stdout.rstrip("\n")).as_uri()+"\r\n",
+                           text=True, check=True)
+    elif action == "obsidian":
+        focus_or_launch("obsidian", "obsidian", "--disable-gpu", "--enable-wayland-ime")
+    elif action == "bindings":
+        show_bindings()
+    elif action == "nightlight":
+        run("systemctl", "--user", "stop" if active("hyprsunset.service") else "start", "hyprsunset.service")
+    elif action == "airplane":
+        run("nmcli", "radio", "all", "off" if output("nmcli", "radio", "wifi") == "enabled" else "on")
+    elif action in ("logout", "reboot", "poweroff", "suspend"):
+        if choose(action.capitalize() + "?", ["Cancel", "Confirm"]) == "Confirm":
+            if action == "logout":
+                run("uwsm", "stop")
+            else:
+                run("systemctl", action)
+    else:
+        raise SystemExit("Unknown Lixx menu: " + action)
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1] if len(sys.argv) > 1 else "main")
+    except (OSError, subprocess.CalledProcessError) as error:
+        subprocess.run(["notify-send", "Lixx menu", str(error)])
+        raise SystemExit(str(error))

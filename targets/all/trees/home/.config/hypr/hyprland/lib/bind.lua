@@ -6,7 +6,11 @@ local programs = {}
 function M.available(name)
     if programs[name] == nil then
         assert(name:match("^[%w._-]+$"))
-        programs[name] = os.execute("command -v " .. name .. " >/dev/null") == true
+        -- Hyprland reaps child processes, so a successful shell lookup can lose
+        -- its exit status. Read the resolved path from the pipe instead.
+        local lookup = io.popen("command -v " .. name .. " 2>/dev/null")
+        programs[name] = lookup ~= nil and lookup:read("*l") ~= nil
+        if lookup then lookup:close() end
     end
     return programs[name]
 end

@@ -1,4 +1,5 @@
 local bind = require("lib.bind")
+local windows = require("lib.windows")
 
 bind.bind("SUPER + H", hl.dsp.focus({ direction = "l" }))
 bind.bind("SUPER + J", hl.dsp.focus({ direction = "d" }))
@@ -28,9 +29,9 @@ bind.bind("SUPER + F", hl.dsp.window.fullscreen({ mode = "fullscreen" }), "Full 
 bind.bind("SUPER + CTRL + F", hl.dsp.window.fullscreen_state({ internal = 0, client = 2 }), "Tiled full screen")
 bind.bind("SUPER + ALT + F", hl.dsp.window.fullscreen({ mode = "maximized" }), "Full width")
 bind.bind("SUPER + T", hl.dsp.window.float({ action = "toggle" }), "Toggle window floating/tiling")
-bind.optional_exec("SUPER + O", "Pop window out (float & pin)", "omarchy-hyprland-window-pop")
+bind.bind("SUPER + O", windows.pop, "Pop window out (float & pin)")
 bind.bind("SUPER + P", hl.dsp.window.pseudo(), "Pseudo window")
-bind.optional_exec("CTRL + ALT + DELETE", "Close all windows", "omarchy-hyprland-window-close-all")
+bind.bind("CTRL + ALT + DELETE", windows.close_all, "Close all windows")
 
 for i = 1, 10 do
     local keycode = i + 9
@@ -78,4 +79,4 @@ for i = 1, 5 do
     bind.bind("SUPER + ALT + code:" .. (i + 9), hl.dsp.group.active({ index = i }), "Switch to group window " .. i)
 end
 
-bind.optional_exec("SUPER + Slash", "Cycle monitor scaling", "omarchy-hyprland-monitor-scaling-cycle")
+bind.bind("SUPER + Slash", windows.scale, "Cycle monitor scaling")
