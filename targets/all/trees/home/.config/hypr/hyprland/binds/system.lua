@@ -22,7 +22,6 @@ bind.bind("SUPER + CTRL + BACKSPACE", windows.square, "Toggle single-window squa
 bind.exec("SUPER + COMMA", "Dismiss last notification", "swaync-client --close-latest")
 bind.exec("SUPER + SHIFT + COMMA", "Dismiss all notifications", "swaync-client --close-all")
 bind.exec("SUPER + CTRL + COMMA", "Toggle silencing notifications", "swaync-client --toggle-dnd")
-bind.exec("SUPER + CTRL + I", "Toggle locking on idle", "lixx-idle toggle")
 bind.exec("SUPER + CTRL + N", "Toggle nightlight", "lixx-menu nightlight")
 bind.exec("PRINT", "Screenshot", "lixx-capture screenshot")
 bind.exec("ALT + PRINT", "Screen recording", "lixx-menu screenrecord")

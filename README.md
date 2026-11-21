@@ -20,6 +20,8 @@ Click inside the preview to capture the mouse and keyboard. The pointer stays in
 
 Each invocation creates a fresh disk overlay over a checksum-verified Ubuntu Server image. The guest receives a snapshot of the working tree, including edited files and new, non-ignored files. The launcher discards the overlay when QEMU exits. Run the same command after an edit to see what a new install produces. The disposable guest automatically accepts file replacements and APT's installation prompt. All install writes take place in that guest.
 
+The preview has 4 GiB of RAM and a 4 GiB swap file on the disposable disk. Compiling Neovim's Git commit parser on first launch can use more memory than the guest has available.
+
 The launcher keeps its files under the checkout's gitignored `vm/.local/` directory. It caches the verified base image in `images/` and creates disposable disks in `runs/`. It uses QEMU from the host's PATH or the unpacked tools in `tools/` on this workstation. Every run resolves and installs the current package profile from the configured archives. [Ubuntu image release](https://cloud-images.ubuntu.com/releases/resolute/release-20261108/)
 
 On another Ubuntu 26.04 development host, the launcher needs Python 3.11 or newer, Git, curl, xorriso and QEMU with SDL and OpenGL support. These packages supply them.
@@ -58,6 +60,7 @@ targets/
       .config/waybar/   Bar layout and CSS
       .config/walker/   Launcher settings and fixed Catppuccin style
       .config/elephant/ Provider settings and wallpaper menu
+      .config/nvim/     LazyVim config, plugin lockfile, spelling and export templates
       .config/zsh/
       .config/systemd/user/
       .local/share/lixx-system/bin/   Lixx programs
@@ -84,6 +87,16 @@ Directories merge. For example, add `targets/ubuntu-26.04/tree/home/.config/wayb
 
 The workstation's Catppuccin colors are embedded in Ghostty, Waybar, Walker, SwayNC and Hyprlock. GTK apps and the desktop portal use the workstation’s Adwaita dark preference, Yaru-purple icons and JetBrains UI font. Ghostty keeps the workstation's font, splits, tabs and clipboard bindings. Zsh loads the workstation's Powerlevel10k prompt and plugins, including fzf-tab, autosuggestions and Vi mode. The installer stages pinned upstream sources for a fresh account. Existing accounts can keep an independent Oh My Zsh installation, personal functions and private `env.zsh`.
 
+Neovim opens with the workstation's Catppuccin LazyVim configuration. On first launch, lazy.nvim installs plugins from GitHub using `lazy-lock.json`. The Ubuntu target includes the Python notebook provider, native build tools, Pandoc, XeLaTeX and the Papers document viewer. In a Markdown buffer, `:MarkdownExportPdf` produces a PDF next to the source document and opens it with the account's default handler. An existing Molten virtual environment takes precedence over the packaged Python provider. [Editor configuration](targets/all/trees/home/.config/nvim) · [Markdown export](targets/all/trees/home/.config/nvim/lua/config/markdown_export.lua)
+
+The spelling configuration includes the workstation's English additions and Vim's German dictionary and suggestions. [German dictionary credits](https://ftp.nluug.nl/pub/vim/runtime/spell/README_de.txt)
+
+Hypridle locks the session after 3 minutes of inactivity and requests display power-off after 5½ minutes. It honors native idle inhibitors from applications such as fullscreen video players. The locker also blanks the display shortly after locking. The lock shortcut, the notification-center button, logind and pre-suspend locking share `lixx-lock.service`, so the password prompt survives a Hypridle restart.
+
+SwayNC selects an installed backlight at startup and on `systemctl --user reload swaync`. On machines without one, the notification center omits the brightness slider.
+
+On Ubuntu 26.04, opening a local HTML file in Epiphany can produce a **realtime portal warning** in `xdg-desktop-portal.service` (`Realtime error: Could not get pidns for pid 2: PIDFD_GET_PID_NAMESPACE ioctl failed: Inappropriate ioctl for device`). Epiphany opened the page, PipeWire playback completed, and the portal stayed active in the VM. Lixx uses Ubuntu's security-maintained portal. As of 21 November 2026, the upstream fix is absent from Ubuntu's installed `1.21.1+ds-1ubuntu3.1` and proposed `1.21.1+ds-1ubuntu3.2`. [Upstream fix](https://github.com/flatpak/xdg-desktop-portal/pull/2176) · [Ubuntu changelog](https://changelogs.ubuntu.com/changelogs/pool/main/x/xdg-desktop-portal/xdg-desktop-portal_1.21.1+ds-1ubuntu3.2/changelog)
+
 | Shortcut | Action |
 | --- | --- |
 | Super+Space | Search applications with Walker |
@@ -102,7 +115,7 @@ The wallpaper picker reads the shipped image, Ubuntu's `/usr/share/backgrounds` 
 
 UWSM supplies the session PATH to Hyprland and the systemd user manager. Walker and Elephant run as session services. Elephant supplies applications, file search, calculator, clipboard, symbols, web search and menus. Lixx pins the Elephant binary and its Go provider plugins to the same release. On Ubuntu, Elephant uses a private `fd` adapter for the packaged `fdfind` executable. [Walker release](https://github.com/abenz1267/walker/releases/tag/v2.15.2) · [Elephant release](https://github.com/abenz1267/elephant/releases/tag/v2.20.3)
 
-Waybar, Hypridle, the wallpaper and the authentication agent also run as user services. The bar selects its battery, Bluetooth and dictation modules according to available hardware and programs. **Super+Shift+Space** starts or stops `lixx-waybar.service`. The UPower listener runs the installed `lixx-battery-events` program. Monique can supply `hypr/monitors.lua`, and machine-specific integrations can load from `hypr/local.lua`. SPF, Slack and HyprStudy use the account's own applications when available.
+Waybar, Hypridle, the wallpaper and the authentication agent also run as user services. On Ubuntu, a system-wide unit condition starts Hyprland’s authentication agent only in Hyprland sessions, so GDM can use its own agent. The bar selects its battery, Bluetooth and dictation modules according to available hardware and programs. **Super+Shift+Space** starts or stops `lixx-waybar.service`. The UPower listener runs the installed `lixx-battery-events` program. Monique can supply `hypr/monitors.lua`, and machine-specific integrations can load from `hypr/local.lua`. SPF, Slack and HyprStudy use the account's own applications when available.
 
 The installer rebuilds `tree/home` and `tree/root` for each run. It caches verified upstream archives under `tree/downloads`. Downloaded programs and source files enter the same review and regular-file installation as the static trees. [Pinned archives](targets/ubuntu-26.04/archives.toml) · [Walker layout and style attribution](LICENSES/Omarchy.txt) · [SwayNC stylesheet license](LICENSES/JaKooLit-GPL-3.0.txt)
 
@@ -148,6 +161,8 @@ The target requires UWSM **0.27.2 or newer**. Ubuntu 26.04 supplies 0.25.2, so L
 
 To adopt a later UWSM release, update the minimum in `packages.txt` and the URL and checksum in `packages.sha256`, then run `./vm/run`. The Hyprland startup hook calls `uwsm finalize`. UWSM's plugin supplies the desktop identity and waits for `HYPRLAND_INSTANCE_SIGNATURE`. The shared Hyprland environment file sets only the cursor sizes.
 
+The workstation plugin lockfile requires Neovim 0.12 and Tree-sitter CLI 0.26.1 or later. Ubuntu 26.04 supplies 0.11.6 and 0.25.9. The same checksum-verified APT transaction installs Neovim 0.12.6, its matching runtime, Tree-sitter CLI 0.26.13 and its matching shared library from Debian Snapshot. The remaining editor and export tools come from Ubuntu. [Package checksums](targets/ubuntu-26.04/packages.sha256) · [Pinned Tree-sitter plugin requirements](https://github.com/nvim-treesitter/nvim-treesitter/blob/37e52c733ada9d8d544d53a763140ef1ba404353/README.md)
+
 Other package differences observed on 2026-11-20 are listed below.
 
 | Component | Workstation | Ubuntu 26.04 target |
@@ -159,22 +174,31 @@ Other package differences observed on 2026-11-20 are listed below.
 
 Add Deb822 `.sources` under `root/etc/apt/sources.list.d/` and `.pref` files under `root/etc/apt/preferences.d/` in either source tree. Lixx discovers these files after combining the trees. When all of a new source's amd64 package indexes are already configured, Lixx reuses the existing entry and applies the selected package preferences. New APT files are root-owned with mode `0644`.
 
-On a machine with the target sources, preferences and package indexes configured, this dry run shows the changes APT would make.
+On a machine with the target sources, preferences and package indexes configured, this Bash dry run shows the changes APT would make.
 
-```sh
+```bash
 (
-  set -e
+  set -eu
   target=targets/ubuntu-26.04
   tmp=$(mktemp -d)
-  trap 'rm -f -- "$tmp/uwsm.deb" && rmdir -- "$tmp"' EXIT
-  read -r digest url < "$target/packages.sha256"
-  /usr/lib/apt/apt-helper download-file "$url" "$tmp/uwsm.deb" "SHA256:$digest"
-  sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$target/packages.txt" |
-    xargs -r -d '\n' apt-get --simulate --no-remove --no-install-recommends --with-source "$tmp/uwsm.deb" satisfy
+  trap 'rm -rf -- "$tmp"' EXIT
+  sources=()
+  while read -r digest url; do
+    [[ -z "$digest" || "$digest" == \#* ]] && continue
+    deb="$tmp/${url##*/}"
+    /usr/lib/apt/apt-helper download-file "$url" "$deb" "SHA256:$digest"
+    sources+=(--with-source "$deb")
+  done < "$target/packages.sha256"
+  mapfile -t packages < <(sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$target/packages.txt")
+  apt-get --simulate --no-remove --no-install-recommends "${sources[@]}" satisfy "${packages[@]}"
 )
 ```
 
 ## Graphical acceptance test
+
+On 2026-11-21 a clean guest loaded all 62 Neovim plugin revisions from the workstation lockfile and produced a one-page PDF and a standalone HTML file. A second install reported zero files changed. The notification button and logind both locked the desktop and accepted the guest password.
+
+Use `./vm/run --software-graphics` for suspend tests. With QEMU's standard VGA device (`bochs-drm`), the guest entered ACPI S3, woke to Hyprlock and returned to the desktop after password entry. With the default VirtIO graphics, the guest locked before sleep, but the display stalled after resume. Close the disposable QEMU window at the end of this test. In one run, issuing `poweroff` after S3 reached the power-off target and then panicked in the guest kernel. Physical suspend and fingerprint unlock still need a hardware test.
 
 On 2026-11-21, a fresh Ubuntu 26.04 preview launched Walker and Ghostty from the keyboard after the checkout was moved. The guest queried Elephant’s calculator and clipboard, selected a wallpaper through Walker, copied and saved a screenshot, recorded a video and unlocked with a password. Reinstalling wrote zero files and preserved the selected wallpaper. Earlier previews also exercised graphical PolicyKit authentication and service recovery.
 

@@ -70,7 +70,6 @@ tooltip {
 
 
 #custom-screenrecording-indicator,
-#custom-idle-indicator,
 #custom-notification-silencing-indicator {
   min-width: 12px;
   margin-left: 5px;
@@ -92,7 +91,6 @@ tooltip {
   color: #a55555;
 }
 
-#custom-idle-indicator.active,
 #custom-notification-silencing-indicator.active {
   color: #a55555;
 }

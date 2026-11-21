@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="$if(lang)$$lang$$else$en$endif$">
+<head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="color-scheme" content="dark">
+        <title>$if(title-prefix)$$title-prefix$ - $endif$$pagetitle$</title>
+$for(css)$
+        <link rel="stylesheet" href="$css$">
+$endfor$
+$if(math)$
+        $math$
+$endif$
+$for(header-includes)$
+        $header-includes$
+$endfor$
+</head>
+<body>
+        <main data-theme="dark">
+                <div id="page-ctn">
+                        <section class="markdown-body">
+$body$
+                        </section>
+                </div>
+        </main>
+</body>
+</html>

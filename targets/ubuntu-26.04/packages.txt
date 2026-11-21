@@ -29,6 +29,8 @@ swaybg
 sway-notification-center
 swayosd
 ibus
+ibus-gtk3
+ibus-gtk4
 at-spi2-core
 adwaita-icon-theme-legacy
 gnome-themes-extra-data
@@ -48,6 +50,29 @@ gir1.2-gdkpixbuf-2.0
 zsh
 zoxide
 fzf
+
+# Workstation LazyVim configuration, plugin builds, notebook kernel and Markdown export.
+neovim (>= 0.12.6)
+tree-sitter-cli (>= 0.26.1)
+git
+curl
+unzip
+ripgrep
+build-essential
+golang-go
+nodejs
+npm
+python3-pynvim
+python3-venv
+python3-jupyter-client
+python3-ipykernel
+python3-nbformat
+pandoc
+papers
+lmodern
+texlive-xetex
+texlive-latex-extra
+texlive-fonts-recommended
 
 # Programs opened from key bindings and Waybar.
 ghostty

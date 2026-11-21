@@ -4,6 +4,7 @@ import pty
 import select
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import tempfile
@@ -148,6 +149,30 @@ class InstallerTests(unittest.TestCase):
         old.write_text("old body\n")
         self.assertEqual(self.cli("yes\n").returncode, 0)
         self.assertFalse(old.exists())
+
+    def test_live_idle_upgrade_keeps_helper_until_services_reload(self):
+        relative = Path(".local/share/lixx-system/bin/lixx-idle")
+        helper = self.home / relative
+        write(helper, "former idle helper\n")
+        digest = hashlib.sha256(helper.read_bytes()).hexdigest()
+        (self.assets.parent.parent / "retired.sha256").write_text(f"{digest}  {relative}\n")
+        self.env["XDG_RUNTIME_DIR"] = str(self.root)
+        bus = self.enterContext(socket.socket(socket.AF_UNIX))
+        bus.bind(str(self.root / "bus"))
+        systemctl = self.root / "bin/systemctl"
+        write(systemctl, '#!/bin/sh\necho "$@" >> "$HOME/reloads"\n'
+              'if [ "$2" = restart ]; then test -e "$HOME/allow-restart"; fi\n')
+        systemctl.chmod(0o755)
+
+        self.assertNotEqual(self.cli("yes\n").returncode, 0)
+        self.assertTrue(helper.is_file())
+        (self.home / "allow-restart").touch()
+        self.assertEqual(self.cli("yes\n").returncode, 0)
+        self.assertFalse(helper.exists())
+        self.assertEqual((self.home / "reloads").read_text().splitlines()[-3:], [
+            "--user is-active --quiet wayland-session@hyprland.desktop.target",
+            "--user restart hypridle.service", "--user try-restart lixx-waybar.service",
+        ])
 
     def test_terminal_review_uses_git_colors_and_preserves_file_details(self):
         write(self.target, "installed line\n")

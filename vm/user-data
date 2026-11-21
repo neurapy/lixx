@@ -1,4 +1,9 @@
 #cloud-config
+# The cloud image has no swap. Allow large Neovim parser builds in the 4 GiB preview.
+swap:
+  filename: /swapfile
+  size: 4294967296
+
 users:
   - name: lixx
     groups: [sudo]

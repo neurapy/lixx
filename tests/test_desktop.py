@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import runpy
 import subprocess
@@ -11,6 +12,45 @@ BIN = Path(__file__).resolve().parents[1] / "targets/all/trees/home/.local/share
 
 
 class DesktopTests(unittest.TestCase):
+    def test_locker_runs_after_a_layout_error_and_returns_its_status(self):
+        runtime = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        systemctl = runtime / "systemctl"
+        systemctl.write_text('#!/bin/sh\necho "$@" > "$XDG_RUNTIME_DIR/lock-service"\nexit 1\n')
+        systemctl.chmod(0o755)
+        for name, status in {"hyprctl": 1, "busctl": 1, "pgrep": 1, "hyprlock": 37}.items():
+            command = runtime / name
+            command.write_text(f"#!/bin/sh\nexit {status}\n")
+            command.chmod(0o755)
+        env = {**os.environ, "PATH": f"{runtime}:/usr/bin", "XDG_RUNTIME_DIR": str(runtime)}
+        self.assertNotEqual(subprocess.run([BIN / "lixx-lock"], env=env).returncode, 0)
+        self.assertEqual((runtime / "lock-service").read_text().strip(), "--user start --wait lixx-lock.service")
+        result = subprocess.run([BIN / "lixx-lock", "--session"], stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, env=env)
+        self.assertEqual(result.returncode, 37)
+
+    def test_swaync_discovers_backlights_and_keeps_other_widgets(self):
+        select = runpy.run_path(str(BIN / "lixx-swaync-config"))["configure_backlights"]
+        devices = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+        def settings():
+            return {"widgets": ["volume", "backlight", "notifications"], "widget-config": {"backlight": {"label": "Light"}}}
+
+        config = settings()
+        select(config, devices)
+        self.assertEqual(config["widgets"], ["volume", "notifications"])
+        for name in ("amdgpu_bl0", "intel_backlight"):
+            device = devices / "backlight" / name
+            device.mkdir(parents=True)
+            (device / "brightness").touch()
+            (device / "max_brightness").touch()
+            config = settings()
+            select(config, devices)
+            self.assertIn("backlight", config["widgets"])
+            self.assertEqual(config["widget-config"]["backlight"].get("device", "intel_backlight"), name)
+        config["widget-config"]["backlight"]["device"] = "amdgpu_bl0"
+        select(config, devices)
+        self.assertEqual(config["widget-config"]["backlight"]["device"], "amdgpu_bl0")
+
     def test_waybar_toggle_uses_the_existing_service(self):
         unit = "lixx-waybar.service"
         for status, action in ((0, "stop"), (3, "start")):

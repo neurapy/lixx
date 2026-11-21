@@ -1,0 +1,8 @@
+[Unit]
+Description=Lixx screen lock
+PartOf=wayland-session@hyprland.desktop.target
+After=wayland-wm@hyprland.desktop.service wayland-session-waitenv.service
+
+[Service]
+Type=exec
+ExecStart=%D/lixx-system/bin/lixx-lock --session

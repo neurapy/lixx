@@ -553,18 +553,25 @@ def install(completed):
         # A running manager may still have the old ExecStart cached. Reload
         # accepted unit files before retiring their former executables.
         runtime = os.environ.get("XDG_RUNTIME_DIR")
-        if (runtime and (Path(runtime) / "bus").is_socket()
-                and any(asset.staged.is_relative_to(checkout / "tree/home/.config/systemd/user")
-                        for asset, _ in pending)):
+        user_bus = runtime and (Path(runtime) / "bus").is_socket()
+        if user_bus and any(asset.destination.is_relative_to(home / ".config/systemd/user")
+                            or asset.destination.is_relative_to(SYSTEM_ROOT / "etc/systemd/user")
+                            for asset, _ in pending):
             subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
         # Keep the old entry points if the user kept an earlier configuration.
         if not any(choice == "skip" for asset, (_, choice) in decisions.items() if not isinstance(asset, Retired)):
-            for asset, reviewed in pending:
-                if isinstance(asset, Retired):
-                    if inspect_destination(asset, checkout) != reviewed:
-                        raise InstallError(f"Former file changed after review: {reviewed.path}")
-                    reviewed.path.unlink()
-                    print(f"Removed {reviewed.path}", flush=True)
+            retired = [(asset, reviewed) for asset, reviewed in pending if isinstance(asset, Retired)]
+            # Load the direct timeout commands before removing a helper a live Hypridle may still call.
+            if (user_bus and any(reviewed.path.name == "lixx-idle" for _, reviewed in retired)
+                    and subprocess.run(["systemctl", "--user", "is-active", "--quiet",
+                                        "wayland-session@hyprland.desktop.target"]).returncode == 0):
+                subprocess.run(["systemctl", "--user", "restart", "hypridle.service"], check=True)
+                subprocess.run(["systemctl", "--user", "try-restart", "lixx-waybar.service"], check=True)
+            for asset, reviewed in retired:
+                if inspect_destination(asset, checkout) != reviewed:
+                    raise InstallError(f"Former file changed after review: {reviewed.path}")
+                reviewed.path.unlink()
+                print(f"Removed {reviewed.path}", flush=True)
         print(f"Files installed: {len(completed)}")
         print("From a local TTY, start the desktop with: uwsm start -- hyprland.desktop")
         print("Super+Return opens Ghostty. Super+Space opens the app launcher.")

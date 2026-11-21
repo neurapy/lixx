@@ -4,6 +4,7 @@ import io
 import json
 import os
 import shutil
+import socket
 import subprocess
 import tarfile
 import tempfile
@@ -77,6 +78,7 @@ class SystemInstallTests(unittest.TestCase):
         self.enterContext(redirect_stdout(self.output))
         self.pref = self.apt / "preferences.d/lixx-hyprland.pref"
         self.source = self.apt / "sources.list.d/lixx-hyprland.sources"
+        self.polkit_dropin = self.system / "etc/systemd/user/hyprpolkitagent.service.d/20-lixx.conf"
         self.home_file = self.home / "desktop-file"
 
     def test_release_program_uses_reviewed_bytes_and_required_executable_mode(self):
@@ -107,10 +109,18 @@ class SystemInstallTests(unittest.TestCase):
         return [json.loads(line) for line in self.log.read_text().splitlines()]
 
     def test_clean_install_and_rerun(self):
+        runtime = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        bus = self.enterContext(socket.socket(socket.AF_UNIX))
+        bus.bind(str(runtime / "bus"))
+        os.environ["XDG_RUNTIME_DIR"] = str(runtime)
+        os.environ["PATH"] = str(runtime) + ":" + os.environ["PATH"]
+        systemctl = runtime / "systemctl"
+        systemctl.write_text('#!/bin/sh\necho "$@" >> "$XDG_RUNTIME_DIR/reloads"\n')
+        systemctl.chmod(0o755)
         completed = []
         lixx.install(completed)
-        self.assertEqual(completed, [self.pref, self.source, self.home_file])
-        for file in (self.pref, self.source):
+        self.assertEqual(completed, [self.pref, self.source, self.polkit_dropin, self.home_file])
+        for file in (self.pref, self.source, self.polkit_dropin):
             source = self.target_tree / "root" / file.relative_to(self.system)
             self.assertEqual(file.read_bytes(), source.read_bytes())
             self.assertEqual(file.stat().st_mode & 0o777, 0o644)
@@ -123,6 +133,25 @@ class SystemInstallTests(unittest.TestCase):
         lixx.install(second)
         self.assertEqual(second, [])
         self.assertEqual([file.stat().st_ino for file in completed], before)
+        self.assertEqual((runtime / "reloads").read_text().splitlines(), ["--user daemon-reload"])
+
+    @unittest.skipUnless(shutil.which("systemd-analyze"), "requires systemd-analyze")
+    def test_gdm_skips_the_hyprland_polkit_agent(self):
+        units = self.target_tree / "root/etc/systemd/user"
+        agent = "hyprpolkitagent.service"
+        # Reproduce the packaged Wayland condition alongside the real Ubuntu drop-in.
+        write_file(units / agent,
+                   "[Unit]\nConditionEnvironment=WAYLAND_DISPLAY\n[Service]\nExecStart=/bin/true\n")
+        env = {**os.environ, "SYSTEMD_UNIT_PATH": str(units), "XDG_RUNTIME_DIR": str(self.home),
+               "WAYLAND_DISPLAY": "wayland-0"}
+        for desktop, extra, status in (("GNOME-Greeter:GNOME", {}, 1),
+                                       ("Hyprland", {"HYPRLAND_INSTANCE_SIGNATURE": "test"}, 0)):
+            with self.subTest(desktop=desktop):
+                result = subprocess.run(
+                    ["systemd-analyze", "--user", "--generators=no", f"--unit={agent}", "condition"],
+                    env={**env, "XDG_CURRENT_DESKTOP": desktop, **extra}, capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, status, result.stderr)
 
     def test_review_cancel_preserves_system_and_home(self):
         self.source.write_text("locally edited source\n")
@@ -134,22 +163,27 @@ class SystemInstallTests(unittest.TestCase):
         self.assertEqual(self.source.read_text(), "locally edited source\n")
         self.assertEqual(self.home_file.read_text(), "locally edited config\n")
 
-    def test_verified_deb_is_offered_to_the_same_apt_transaction(self):
+    def test_verified_debs_are_offered_to_the_same_apt_transaction(self):
         manifest = self.profile / "packages.sha256"
         shutil.copy2(REPO / lixx.PROFILE / manifest.name, manifest)
-        digest, url = manifest.read_text().split()
         helper = self.home / "apt-helper"
-        helper.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/download"\n(umask 077 && touch "$3")\n')
+        helper.write_text('#!/bin/sh\nprintf "%s\\t%s\\t%s\\t%s\\n" "$@" >> "$HOME/download"\n(umask 077 && touch "$3")\n')
         helper.chmod(0o755)
         with patch.object(lixx, "APT_HELPER", helper):
             lixx.install([])
-        command, uri, archive, checksum = (self.home / "download").read_text().splitlines()
-        self.assertEqual((command, uri, checksum), ("download-file", url, f"SHA256:{digest}"))
+        downloads = (self.home / "download").read_text().splitlines()
+        entries = [line.split() for line in manifest.read_text().splitlines() if line and not line.startswith("#")]
+        sources = []
+        for (digest, url), download in zip(entries, downloads, strict=True):
+            command, uri, archive, checksum = download.split("\t")
+            self.assertEqual((command, uri, checksum), ("download-file", url, f"SHA256:{digest}"))
+            self.assertEqual(Path(archive).name, url.rsplit("/", 1)[1])
+            self.assertFalse(Path(archive).parent.exists())
+            sources.extend(["--with-source", archive])
         self.assertEqual(self.apt_calls()[-1], [
-            "--no-remove", "--no-install-recommends", "--with-source", archive, "satisfy",
+            "--no-remove", "--no-install-recommends", *sources, "satisfy",
             *lixx.package_requirements(self.profile),
         ])
-        self.assertFalse(Path(archive).parent.exists())
 
     def test_failed_package_download_stops_before_package_install(self):
         shutil.copy2(REPO / lixx.PROFILE / "packages.sha256", self.profile)
@@ -277,7 +311,7 @@ class SystemInstallTests(unittest.TestCase):
         self.assertFalse(any("satisfy" in call for call in self.apt_calls()))
         del os.environ["TEST_FAIL"]
         lixx.install(completed)
-        self.assertEqual(completed, [self.pref, self.home_file])
+        self.assertEqual(completed, [self.pref, self.polkit_dropin, self.home_file])
 
     def test_unsupported_system_or_root_stops_before_staging(self):
         for release, uid in (({"ID": "debian", "VERSION_ID": "13"}, 1000),

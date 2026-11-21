@@ -68,7 +68,7 @@
         },
         {
           "label": "󰌾",
-          "command": "loginctl lock-session"
+          "command": "lixx-lock"
         },
         {
           "label": "󰍃",

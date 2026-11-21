@@ -82,16 +82,18 @@ def qemu_tools(state):
     env = os.environ.copy()
     env["LD_LIBRARY_PATH"] = os.pathsep.join(filter(None, (str(lib), env.get("LD_LIBRARY_PATH"))))
     env["QEMU_MODULE_DIR"] = str(lib / "qemu")
-    return [system, "-L", prefix / "share/qemu", "-bios", prefix / "share/seabios/bios-256k.bin"], image, env
+    return [system, "-L", prefix / "share/qemu", "-L", prefix / "share/seabios",
+            "-bios", prefix / "share/seabios/bios-256k.bin"], image, env
 
 
-def preview(target):
+def preview(target, software_graphics=False):
     if not (os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")):
         raise ValueError("Run vm/run in a graphical session to open the VM window.")
     if not shutil.which("xorriso"):
         raise ValueError("Install xorriso on the development host to create the guest's seed ISO.")
     state = ROOT / LOCAL
     qemu, qemu_img, env = qemu_tools(state)
+    gpu, display = ("VGA", "sdl,gl=off") if software_graphics else ("virtio-vga-gl", "sdl,gl=on")
     if env.get("WAYLAND_DISPLAY"):
         env.setdefault("SDL_VIDEODRIVER", "wayland,x11")
     state.mkdir(mode=0o700, exist_ok=True)
@@ -122,7 +124,7 @@ def preview(target):
                         "-drive", "file=disk.qcow2,format=qcow2,if=virtio",
                         "-drive", "file=seed.iso,format=raw,media=cdrom,readonly=on",
                         "-netdev", "user,id=net", "-device", "virtio-net-pci,netdev=net,romfile=",
-                        "-device", "virtio-vga-gl", "-display", "sdl,gl=on",
+                        "-device", gpu, "-display", display,
                         "-device", "qemu-xhci", "-device", "usb-kbd", "-device", "usb-mouse",
                         "-audiodev", "pipewire,id=sound", "-device", "ich9-intel-hda",
                         "-device", "hda-duplex,audiodev=sound",
@@ -153,11 +155,13 @@ def main():
     parser.add_argument("target", nargs="?", choices=targets,
                         default=targets[0] if len(targets) == 1 else None,
                         help="guest installer target (defaults to the sole available target)")
+    parser.add_argument("--software-graphics", action="store_true",
+                        help="use standard VGA for suspend and resume testing")
     args = parser.parse_args()
     if not args.target:
         parser.error("select a target with a VM profile")
     try:
-        preview(args.target)
+        preview(args.target, software_graphics=args.software_graphics)
     except KeyboardInterrupt:
         return 130
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:

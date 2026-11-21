@@ -64,7 +64,7 @@ MENUS = {
              "Toggle": "toggle", "Share": "share", "Key bindings": "bindings", "System": "system"},
     "system": {"Lock": ["lixx-lock"], "Suspend": "suspend", "Log out": "logout",
                "Restart": "reboot", "Shut down": "poweroff"},
-    "toggle": {"Top bar": ["lixx-waybar", "toggle"], "Idle lock": ["lixx-idle", "toggle"], "Nightlight": "nightlight",
+    "toggle": {"Top bar": ["lixx-waybar", "toggle"], "Nightlight": "nightlight",
                "Silence notifications": ["swaync-client", "--toggle-dnd"],
                "Window gaps": ["hyprctl", "eval", 'require("lib.windows").gaps()'],
                "Single-window aspect ratio": ["hyprctl", "eval", 'require("lib.windows").square()'],

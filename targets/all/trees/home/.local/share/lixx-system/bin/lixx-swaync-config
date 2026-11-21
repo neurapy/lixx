@@ -1,0 +1,30 @@
+#!/usr/bin/python3
+"""Select SwayNC brightness sliders for this machine before startup or reload."""
+import json
+import os
+from pathlib import Path
+
+
+def configure_backlights(config, devices):
+    widgets = config.get("widgets", [])
+    for name in widgets.copy():
+        if name.split("#", 1)[0] != "backlight":
+            continue
+        options = config.setdefault("widget-config", {}).setdefault(name, {})
+        subsystem = devices / options.get("subsystem", "backlight")
+        available = sorted(path.parent.name for path in subsystem.glob("*/brightness")
+                           if (path.parent / "max_brightness").is_file())
+        if not available:
+            widgets.remove(name)
+        elif options.get("device", "intel_backlight") not in available:
+            options["device"] = available[0]
+
+
+if __name__ == "__main__":
+    source = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "swaync/config.json"
+    config = json.loads(source.read_text())
+    configure_backlights(config, Path("/sys/class"))
+    output = Path(os.environ["RUNTIME_DIRECTORY"]) / "config.json"
+    temporary = output.with_suffix(".tmp")
+    temporary.write_text(json.dumps(config, ensure_ascii=False) + "\n")
+    temporary.replace(output)

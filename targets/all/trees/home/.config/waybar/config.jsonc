@@ -12,7 +12,6 @@
     "clock",
     "custom/voxtype",
     "custom/screenrecording-indicator",
-    "custom/idle-indicator",
     "custom/notification-silencing-indicator"
   ],
   "modules-right": [
@@ -195,13 +194,6 @@
     "on-click-right": "uwsm-app -- ghostty -e voxtype --help",
     "on-click": "voxtype record toggle"
   },
-  "custom/idle-indicator": {
-    "on-click": "lixx-idle toggle",
-    "exec": "lixx-idle",
-    "signal": 9,
-    "return-type": "json",
-    "exec-on-event": false
-  },
   "custom/notification-silencing-indicator": {
     "on-click": "swaync-client --toggle-dnd",
     "exec": "swaync-client --subscribe-waybar",
@@ -218,6 +210,7 @@
     "exec-on-event": false
   },
   "tray": {
+    "icons": { "nm-tray": "network-workgroup" },
     "icon-size": 12,
     "spacing": 17
   }
