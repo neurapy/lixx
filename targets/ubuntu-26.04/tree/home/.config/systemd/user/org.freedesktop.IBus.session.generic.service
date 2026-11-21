@@ -1,0 +1,13 @@
+[Unit]
+Description=IBus Daemon for generic sessions
+CollectMode=inactive-or-failed
+Conflicts=gnome-session-initialized.target
+
+[Service]
+# Ubuntu's GNOME unit already declares BusName=org.freedesktop.IBus.
+Type=exec
+ExecStart=/usr/bin/ibus-daemon $IBUS_DAEMON_ARGS
+ExecStartPost=/usr/bin/gdbus wait --session org.freedesktop.IBus
+Restart=on-abnormal
+TimeoutStopSec=5
+Slice=session.slice

@@ -6,6 +6,10 @@ The repo holds the source configs, native program sources and installation rules
 
 Executing the installer on a clean system should give me my complete current OS.
 
+## Quick tests
+
+Run `python3 -m unittest discover -s tests -v` from the checkout for the local regression suite. Add `-k gdm` to check how the authentication agent starts in GDM and Hyprland. Use the VM for clean installations and graphical behavior that needs a running desktop.
+
 ## Preview the current checkout in a VM
 
 From the development checkout, run this in a graphical Linux session.
@@ -87,13 +91,19 @@ Directories merge. For example, add `targets/ubuntu-26.04/tree/home/.config/wayb
 
 The workstation's Catppuccin colors are embedded in Ghostty, Waybar, Walker, SwayNC and Hyprlock. GTK apps and the desktop portal use the workstation’s Adwaita dark preference, Yaru-purple icons and JetBrains UI font. Ghostty keeps the workstation's font, splits, tabs and clipboard bindings. Zsh loads the workstation's Powerlevel10k prompt and plugins, including fzf-tab, autosuggestions and Vi mode. The installer stages pinned upstream sources for a fresh account. Existing accounts can keep an independent Oh My Zsh installation, personal functions and private `env.zsh`.
 
-Neovim opens with the workstation's Catppuccin LazyVim configuration. On first launch, lazy.nvim installs plugins from GitHub using `lazy-lock.json`. The Ubuntu target includes the Python notebook provider, native build tools, Pandoc, XeLaTeX and the Papers document viewer. In a Markdown buffer, `:MarkdownExportPdf` produces a PDF next to the source document and opens it with the account's default handler. An existing Molten virtual environment takes precedence over the packaged Python provider. [Editor configuration](targets/all/trees/home/.config/nvim) · [Markdown export](targets/all/trees/home/.config/nvim/lua/config/markdown_export.lua)
+Neovim opens with the workstation's Catppuccin LazyVim configuration. On first launch, lazy.nvim fetches the locked plugins and LazyVim uses Mason to install a missing Tree-sitter CLI. When Neovim registers or uses Molten, its Python provider creates or reuses `molten-venv` in Neovim's data directory. It installs pynvim, jupyter-client, ipykernel and nbformat there. First setup needs network access. The environment also supplies a local `python3` kernel for `:MoltenInit python3`. [Editor configuration](targets/all/trees/home/.config/nvim) · [Molten's requirements](https://github.com/benlubas/molten-nvim#requirements)
+
+The Ubuntu target supplies Python's venv support, the native build tools, Pandoc, XeLaTeX and the Papers document viewer. In a Markdown buffer, `:MarkdownExportPdf` writes a PDF next to the source and opens it with the account's default handler. [Markdown export](targets/all/trees/home/.config/nvim/lua/config/markdown_export.lua)
 
 The spelling configuration includes the workstation's English additions and Vim's German dictionary and suggestions. [German dictionary credits](https://ftp.nluug.nl/pub/vim/runtime/spell/README_de.txt)
 
 Hypridle locks the session after 3 minutes of inactivity and requests display power-off after 5½ minutes. It honors native idle inhibitors from applications such as fullscreen video players. The locker also blanks the display shortly after locking. The lock shortcut, the notification-center button, logind and pre-suspend locking share `lixx-lock.service`, so the password prompt survives a Hypridle restart.
 
 SwayNC selects an installed backlight at startup and on `systemctl --user reload swaync`. On machines without one, the notification center omits the brightness slider.
+
+Lixx uses Ubuntu's `sway-notification-center` package. In Ubuntu 26.04's `0.12.4-1`, a notification received while SwayNC starts can be acknowledged and lost before the notification history is ready. [SwayNC startup code](https://github.com/ErikReider/SwayNotificationCenter/blob/v0.12.4/src/main.vala#L103-L149)
+
+In Hyprland, systemd starts the generic IBus daemon and waits for its D-Bus name. Ubuntu's GNOME unit keeps its own session startup. Select an input method in IBus when needed. Hyprland applies the configured keyboard layout and Compose key directly. [Ubuntu IBus unit](targets/ubuntu-26.04/tree/home/.config/systemd/user/org.freedesktop.IBus.session.generic.service)
 
 On Ubuntu 26.04, opening a local HTML file in Epiphany can produce a **realtime portal warning** in `xdg-desktop-portal.service` (`Realtime error: Could not get pidns for pid 2: PIDFD_GET_PID_NAMESPACE ioctl failed: Inappropriate ioctl for device`). Epiphany opened the page, PipeWire playback completed, and the portal stayed active in the VM. Lixx uses Ubuntu's security-maintained portal. As of 21 November 2026, the upstream fix is absent from Ubuntu's installed `1.21.1+ds-1ubuntu3.1` and proposed `1.21.1+ds-1ubuntu3.2`. [Upstream fix](https://github.com/flatpak/xdg-desktop-portal/pull/2176) · [Ubuntu changelog](https://changelogs.ubuntu.com/changelogs/pool/main/x/xdg-desktop-portal/xdg-desktop-portal_1.21.1+ds-1ubuntu3.2/changelog)
 
@@ -161,7 +171,7 @@ The target requires UWSM **0.27.2 or newer**. Ubuntu 26.04 supplies 0.25.2, so L
 
 To adopt a later UWSM release, update the minimum in `packages.txt` and the URL and checksum in `packages.sha256`, then run `./vm/run`. The Hyprland startup hook calls `uwsm finalize`. UWSM's plugin supplies the desktop identity and waits for `HYPRLAND_INSTANCE_SIGNATURE`. The shared Hyprland environment file sets only the cursor sizes.
 
-The workstation plugin lockfile requires Neovim 0.12 and Tree-sitter CLI 0.26.1 or later. Ubuntu 26.04 supplies 0.11.6 and 0.25.9. The same checksum-verified APT transaction installs Neovim 0.12.6, its matching runtime, Tree-sitter CLI 0.26.13 and its matching shared library from Debian Snapshot. The remaining editor and export tools come from Ubuntu. [Package checksums](targets/ubuntu-26.04/packages.sha256) · [Pinned Tree-sitter plugin requirements](https://github.com/nvim-treesitter/nvim-treesitter/blob/37e52c733ada9d8d544d53a763140ef1ba404353/README.md)
+The editor config needs Neovim 0.12 or later. Each `./lixx install` refreshes the indexes and requests the latest stable Neovim package available to APT. Ubuntu 26.04 ships 0.11.6, so the target enables Debian's signed sid archive for `neovim`, its matching `neovim-runtime` and the `libtree-sitter0.26` shared library. APT preferences select packaged upstream release versions and exclude development snapshots from sid. Normal APT upgrades can update the editor. If a future build needs a new library unavailable from the target sources, APT reports the dependency for review. [Neovim package](https://packages.debian.org/sid/neovim) · [Restricted APT source](targets/ubuntu-26.04/tree/root/etc/apt/sources.list.d/lixx-neovim.sources) · [Version preferences](targets/ubuntu-26.04/tree/root/etc/apt/preferences.d/lixx-neovim.pref)
 
 Other package differences observed on 2026-11-20 are listed below.
 
@@ -190,7 +200,8 @@ On a machine with the target sources, preferences and package indexes configured
     sources+=(--with-source "$deb")
   done < "$target/packages.sha256"
   mapfile -t packages < <(sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$target/packages.txt")
-  apt-get --simulate --no-remove --no-install-recommends "${sources[@]}" satisfy "${packages[@]}"
+  candidate=$(LC_ALL=C apt-cache policy neovim | awk '$1 == "Candidate:" {print $2}')
+  apt-get --simulate --no-remove --no-install-recommends "${sources[@]}" satisfy "${packages[@]}" "neovim (= $candidate)"
 )
 ```
 
@@ -227,5 +238,3 @@ For a quick desktop check, use `./vm/run`. To also exercise moving the checkout 
    ```
 
 4. Confirm logout with **Super+Shift+E**. Run `~/lixx-moved/lixx install` again. Matching files should yield `Files installed: 0`. Edit two installed configs and rerun the same command. Answer Yes and Cancel to keep both edits, then repeat with Yes and Skip to apply only the first replacement.
-
-Run `python3 -m unittest discover -s tests -v` from the checkout for the isolated installer tests.

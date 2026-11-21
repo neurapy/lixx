@@ -2,7 +2,17 @@ return {
     "benlubas/molten-nvim",
     lazy = false,
     version = false,
-    build = ":UpdateRemotePlugins",
+    build = function(plugin)
+        require("lazy").load({ plugins = { plugin.name } })
+        local manifest = vim.g.loaded_remote_plugins
+        local first_install = vim.fn.filereadable(manifest) == 0
+        vim.cmd.UpdateRemotePlugins()
+        if first_install then
+            -- Neovim checked for the manifest before lazy.nvim built Molten.
+            vim.cmd.source({ args = { manifest }, magic = { file = false } })
+            assert(vim.fn.exists(":MoltenInit") == 2, "Molten registration failed. Run :Lazy build molten-nvim to retry.")
+        end
+    end,
 
     init = function()
         vim.g.molten_image_provider = "none"

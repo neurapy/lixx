@@ -51,9 +51,8 @@ zsh
 zoxide
 fzf
 
-# Workstation LazyVim configuration, plugin builds, notebook kernel and Markdown export.
-neovim (>= 0.12.6)
-tree-sitter-cli (>= 0.26.1)
+# Editor, tools for plugin builds and Markdown export.
+neovim (>= 0.12)
 git
 curl
 unzip
@@ -62,11 +61,7 @@ build-essential
 golang-go
 nodejs
 npm
-python3-pynvim
 python3-venv
-python3-jupyter-client
-python3-ipykernel
-python3-nbformat
 pandoc
 papers
 lmodern

@@ -1,17 +1,50 @@
+import configparser
 import json
 import os
 from pathlib import Path
 import runpy
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 
-BIN = Path(__file__).resolve().parents[1] / "targets/all/trees/home/.local/share/lixx-system/bin"
+HOME_TREE = Path(__file__).resolve().parents[1] / "targets/all/trees/home"
+BIN = HOME_TREE / ".local/share/lixx-system/bin"
 
 
 class DesktopTests(unittest.TestCase):
+    def test_molten_reuses_an_existing_environment_offline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "editor data"
+            venv = data / "work-nvim/molten-venv"
+            subprocess.run([sys.executable, "-m", "venv", "--without-pip", venv], check=True)
+            modules = Path(tmp) / "modules"
+            modules.mkdir()
+            for name in ("pynvim", "jupyter_client", "ipykernel", "nbformat"):
+                (modules / f"{name}.py").touch()
+            jupyter = Path(tmp) / "jupyter data"
+            env = {**os.environ, "XDG_DATA_HOME": str(data), "NVIM_APPNAME": "work-nvim",
+                   "JUPYTER_DATA_DIR": str(jupyter), "PYTHONPATH": str(modules), "PIP_NO_INDEX": "1"}
+            result = subprocess.run([HOME_TREE / ".config/nvim/bin/molten-python", "-c",
+                                     "import sys; print(sys.executable)"], env=env,
+                                    text=True, capture_output=True, check=True)
+            self.assertEqual(result.stdout.strip(), str(venv / "bin/python"))
+            self.assertEqual((jupyter / "runtime").stat().st_mode & 0o777, 0o700)
+            self.assertFalse((venv / "bin/pip").exists())
+
+    def test_bluetooth_audio_is_started_at_login_and_on_hotplug(self):
+        units = HOME_TREE / ".config/systemd/user"
+        for trigger in ("wireplumber.service", "bluetooth.target"):
+            with self.subTest(trigger=trigger):
+                wants = set()
+                for path in (units / f"{trigger}.d").glob("*.conf"):
+                    fragment = configparser.ConfigParser()
+                    fragment.read(path)
+                    wants.update(fragment.get("Unit", "Wants", fallback="").split())
+                self.assertIn("wireplumber@bluetooth.service", wants)
+
     def test_locker_runs_after_a_layout_error_and_returns_its_status(self):
         runtime = Path(self.enterContext(tempfile.TemporaryDirectory()))
         systemctl = runtime / "systemctl"

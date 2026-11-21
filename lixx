@@ -480,6 +480,14 @@ def install_root_file(asset, reviewed, checkout):
 def install_packages(profile, packages):
     print("Refreshing APT indexes...", flush=True)
     subprocess.run(["sudo", "apt-get", "--error-on=any", "update"], check=True)
+    # "satisfy" would keep an older editor once it meets the plugin API minimum.
+    if any(requirement.split()[0] == "neovim" for requirement in packages):
+        policy = subprocess.check_output(["apt-cache", "policy", "neovim"], text=True,
+                                         env={**os.environ, "LC_ALL": "C"})
+        candidate = re.search(r"^\s*Candidate: ([0-9]\S*)$", policy, re.MULTILINE)
+        if not candidate:
+            raise InstallError("APT has no Neovim candidate. Check the target's Neovim source.")
+        packages = [*packages, f"neovim (= {candidate[1]})"]
     with tempfile.TemporaryDirectory(prefix="lixx-apt-", dir="/tmp") as temporary:
         directory = Path(temporary)
         sources = []

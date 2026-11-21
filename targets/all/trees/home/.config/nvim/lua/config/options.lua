@@ -9,7 +9,6 @@ vim.opt.autoindent = true
 
 vim.opt.spelllang = { "en", "de" }
 
-local molten_python = vim.fn.stdpath("data") .. "/molten-venv/bin/python"
-vim.g.python3_host_prog = vim.fn.executable(molten_python) == 1 and molten_python or "/usr/bin/python3"
+vim.g.python3_host_prog = vim.fn.stdpath("config") .. "/bin/molten-python"
 -- vim.opt.conceallevel = 0 -- Right now this has to be set for the notebook_seperators to work.
 -- vim.opt.concealcursor = ""

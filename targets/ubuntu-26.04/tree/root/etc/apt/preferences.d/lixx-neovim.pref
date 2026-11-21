@@ -1,0 +1,8 @@
+# Follow upstream release tags packaged by Debian. Skip development snapshots.
+Package: neovim neovim-runtime
+Pin: version /^([0-9]+:)?[0-9]+[.][0-9]+[.][0-9]+([+](ds|dfsg)[0-9.]*)?-[0-9]/
+Pin-Priority: 500
+
+Package: neovim neovim-runtime
+Pin: release o=Debian,n=sid
+Pin-Priority: -1

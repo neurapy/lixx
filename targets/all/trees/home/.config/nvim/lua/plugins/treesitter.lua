@@ -1,20 +1,16 @@
+local function update_parsers()
+        return require("nvim-treesitter").update(nil, { summary = true, max_jobs = 1 })
+end
+
 return {
         "nvim-treesitter/nvim-treesitter",
         branch = "main",
         version = false, -- last release is way too old and doesn't work on Windows
         build = function()
-                local TS = require("nvim-treesitter")
-                if not TS.get_installed then
-                        LazyVim.error(
-                                "Please restart Neovim and run `:TSUpdate` to use the `nvim-treesitter` **main** branch."
-                        )
-                        return
+                -- The config below handles first setup once Mason has installed the CLI.
+                if vim.fn.executable("tree-sitter") == 1 then
+                        update_parsers()
                 end
-                -- make sure we're using the latest treesitter util
-                package.loaded["lazyvim.util.treesitter"] = nil
-                LazyVim.treesitter.build(function()
-                        TS.update(nil, { summary = true, max_jobs = 1 })
-                end)
         end,
         event = { "LazyFile", "VeryLazy" },
         cmd = { "TSUpdate", "TSInstall", "TSLog", "TSUninstall" },
@@ -34,7 +30,6 @@ return {
                         "javascript",
                         "jsdoc",
                         "json",
-                        "jsonc",
                         "lua",
                         "luadoc",
                         "luap",
@@ -82,17 +77,28 @@ return {
                 -- setup treesitter
                 TS.setup(opts)
                 LazyVim.treesitter.get_installed(true) -- initialize the installed langs
+                -- Neovim can cache the runtime path before this directory exists on first launch.
+                vim.opt.runtimepath:prepend(opts.install_dir or vim.fn.stdpath("data") .. "/site")
 
                 -- install missing parsers
                 local install = vim.tbl_filter(function(lang)
                         return not LazyVim.treesitter.have(lang)
                 end, opts.ensure_installed or {})
-                if #install > 0 then
-                        LazyVim.treesitter.build(function()
-                                -- Large parser builds can exhaust a 4 GiB machine when run together.
+                local missing_cli = vim.fn.executable("tree-sitter") == 0
+                local function install_missing()
+                        if #install > 0 then
                                 TS.install(install, { summary = true, max_jobs = 1 }):await(function()
                                         LazyVim.treesitter.get_installed(true) -- refresh the installed langs
                                 end)
+                        end
+                end
+                if missing_cli or #install > 0 then
+                        LazyVim.treesitter.build(function()
+                                if missing_cli and #TS.get_installed("parsers") > 0 then
+                                        update_parsers():await(install_missing)
+                                else
+                                        install_missing()
+                                end
                         end)
                 end
 

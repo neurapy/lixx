@@ -1,0 +1,32 @@
+#!/bin/sh
+# Neovim starts this Python provider when it registers or uses a remote plugin.
+set -eu
+data="${XDG_DATA_HOME:-$HOME/.local/share}"
+venv="$data/${NVIM_APPNAME:-nvim}/molten-venv"
+python="$venv/bin/python"
+# Molten writes kernel connection files here even before a Jupyter app has run.
+mkdir -p -m 700 -- "${JUPYTER_DATA_DIR:-$data/jupyter}/runtime"
+
+ready() {
+    [ -x "$python" ] && "$python" -c '
+import sys
+from importlib.util import find_spec
+sys.exit(not all(find_spec(name) for name in ("pynvim", "jupyter_client", "ipykernel", "nbformat")))
+'
+}
+
+if ! ready; then
+    mkdir -p -- "$venv"
+    (
+        # Two editor sessions can start together. Keep stdout free for Neovim RPC.
+        flock -x 9
+        if ! ready; then
+            if [ ! -x "$python" ]; then
+                /usr/bin/python3 -m venv "$venv"
+            fi
+            "$python" -m ensurepip --upgrade
+            "$python" -m pip install --disable-pip-version-check pynvim jupyter-client ipykernel nbformat
+        fi
+    ) 9<"$venv" >&2
+fi
+exec "$python" "$@"

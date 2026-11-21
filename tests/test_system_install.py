@@ -55,11 +55,16 @@ class SystemInstallTests(unittest.TestCase):
             '    assert os.stat(archive).st_mode & 0o004 and os.stat(os.path.dirname(archive)).st_mode & 0o001\n'
             'if "indextargets" in sys.argv:\n'
             '    if any(arg.startswith("Dir::Etc::sourcelist=") for arg in sys.argv):\n'
-            '        print("https://example.invalid/dists/resolute/main/binary-amd64/Packages profile.sources:1")\n'
+            '        suite = "sid" if any("lixx-neovim.sources" in a for a in sys.argv) else "resolute"\n'
+            '        print(f"https://example.invalid/dists/{suite}/main/binary-amd64/Packages profile.sources:1")\n'
             '    else:\n'
             '        print(os.environ.get("TEST_INDEX", ""))\n'
             'if os.environ.get("TEST_FAIL") in sys.argv:\n'
             '    sys.exit(100)\n'
+        )
+        (bin_dir / "apt-cache").write_text(
+            '#!/bin/sh\n[ "$*" = "policy neovim" ] || exit 1\n'
+            'printf "neovim:\\n  Installed: 0.12.6-1\\n  Candidate: %s\\n" "${TEST_NVIM_CANDIDATE:-0.12.7-1}"\n'
         )
         for stub in bin_dir.iterdir():
             stub.chmod(0o755)
@@ -78,6 +83,8 @@ class SystemInstallTests(unittest.TestCase):
         self.enterContext(redirect_stdout(self.output))
         self.pref = self.apt / "preferences.d/lixx-hyprland.pref"
         self.source = self.apt / "sources.list.d/lixx-hyprland.sources"
+        self.editor_pref = self.apt / "preferences.d/lixx-neovim.pref"
+        self.editor_source = self.apt / "sources.list.d/lixx-neovim.sources"
         self.polkit_dropin = self.system / "etc/systemd/user/hyprpolkitagent.service.d/20-lixx.conf"
         self.home_file = self.home / "desktop-file"
 
@@ -119,18 +126,22 @@ class SystemInstallTests(unittest.TestCase):
         systemctl.chmod(0o755)
         completed = []
         lixx.install(completed)
-        self.assertEqual(completed, [self.pref, self.source, self.polkit_dropin, self.home_file])
-        for file in (self.pref, self.source, self.polkit_dropin):
+        self.assertEqual(completed, [self.pref, self.editor_pref, self.source, self.editor_source,
+                                     self.polkit_dropin, self.home_file])
+        for file in (self.pref, self.editor_pref, self.source, self.editor_source, self.polkit_dropin):
             source = self.target_tree / "root" / file.relative_to(self.system)
             self.assertEqual(file.read_bytes(), source.read_bytes())
             self.assertEqual(file.stat().st_mode & 0o777, 0o644)
         self.assertEqual(self.apt_calls()[-2:], [
             ["--error-on=any", "update"],
-            ["--no-remove", "--no-install-recommends", "satisfy", *lixx.package_requirements(self.profile)],
+            ["--no-remove", "--no-install-recommends", "satisfy", *lixx.package_requirements(self.profile),
+             "neovim (= 0.12.7-1)"],
         ])
         before = [file.stat().st_ino for file in completed]
         second = []
+        os.environ["TEST_NVIM_CANDIDATE"] = "0.13.0-1"
         lixx.install(second)
+        self.assertIn("neovim (= 0.13.0-1)", self.apt_calls()[-1])
         self.assertEqual(second, [])
         self.assertEqual([file.stat().st_ino for file in completed], before)
         self.assertEqual((runtime / "reloads").read_text().splitlines(), ["--user daemon-reload"])
@@ -159,7 +170,7 @@ class SystemInstallTests(unittest.TestCase):
         with patch("builtins.input", side_effect=["yes", "cancel"]), self.assertRaises(lixx.Cancelled):
             lixx.install([])
         self.assertFalse(self.pref.exists())
-        self.assertFalse(self.log.exists())
+        self.assertTrue(all("indextargets" in call for call in self.apt_calls()))
         self.assertEqual(self.source.read_text(), "locally edited source\n")
         self.assertEqual(self.home_file.read_text(), "locally edited config\n")
 
@@ -182,8 +193,48 @@ class SystemInstallTests(unittest.TestCase):
             sources.extend(["--with-source", archive])
         self.assertEqual(self.apt_calls()[-1], [
             "--no-remove", "--no-install-recommends", *sources, "satisfy",
-            *lixx.package_requirements(self.profile),
+            *lixx.package_requirements(self.profile), "neovim (= 0.12.7-1)",
         ])
+
+    def test_missing_neovim_candidate_stops_before_install(self):
+        os.environ["TEST_NVIM_CANDIDATE"] = "(none)"
+        with self.assertRaisesRegex(lixx.InstallError, "no Neovim candidate"):
+            lixx.install([])
+        self.assertFalse(any("satisfy" in call for call in self.apt_calls()))
+        self.assertFalse(self.home_file.exists())
+
+    def test_debian_index_only_offers_the_editor_and_its_release_versions(self):
+        apt_cache = shutil.which("apt-cache", path=os.defpath)
+        release = Path("/etc/os-release")
+        if not apt_cache or not release.is_file() or 'VERSION_ID="26.04"' not in release.read_text():
+            self.skipTest("requires Ubuntu 26.04 APT")
+        lists = self.home / "lists"
+        lists.mkdir()
+        index = "deb.debian.org_debian_dists_sid"
+        (lists / f"{index}_Release").write_text(
+            "Origin: Debian\nSuite: unstable\nCodename: sid\nArchitectures: amd64\nComponents: main\n"
+        )
+        names = ("neovim", "neovim-runtime", "libtree-sitter0.26", "libc6", "tree-sitter-cli")
+        records = [(name, "1.2.3-1") for name in names]
+        records.extend([("neovim", "1.3.0~rc1-1"), ("neovim", "1.4.0+git1-1")])
+        (lists / f"{index}_main_binary-amd64_Packages").write_text("".join(
+            f"Package: {name}\nVersion: {version}\nArchitecture: amd64\nDescription: fixture\n\n"
+            for name, version in records
+        ))
+        apt = self.target_tree / "root/etc/apt"
+        result = subprocess.run([
+            apt_cache, "-o", f"Dir::State::lists={lists}", "-o", "Dir::State::status=/dev/null",
+            "-o", "Dir::Cache::pkgcache=", "-o", f"Dir::Etc::sourcelist={apt}/sources.list.d/lixx-neovim.sources",
+            "-o", "Dir::Etc::sourceparts=-", "-o", f"Dir::Etc::preferences={apt}/preferences.d/lixx-neovim.pref",
+            "-o", "Dir::Etc::preferencesparts=-", "policy", *names,
+        ], text=True, capture_output=True, check=True, env={**os.environ, "LC_ALL": "C"})
+        self.assertEqual(result.stdout.count("Candidate: 1.2.3-1"), 3, result.stdout)
+        for name in names[:3]:
+            self.assertIn(f"{name}:\n", result.stdout)
+        for name in names[3:]:
+            self.assertNotIn(f"{name}:\n", result.stdout)
+        self.assertIn("1.3.0~rc1-1 -1", result.stdout)
+        self.assertIn("1.4.0+git1-1 -1", result.stdout)
 
     def test_failed_package_download_stops_before_package_install(self):
         shutil.copy2(REPO / lixx.PROFILE / "packages.sha256", self.profile)
@@ -191,6 +242,24 @@ class SystemInstallTests(unittest.TestCase):
             lixx.install([])
         self.assertFalse(any("satisfy" in call for call in self.apt_calls()))
         self.assertFalse(self.home_file.exists())
+
+    @unittest.skipUnless(shutil.which("systemd-analyze") and
+                         Path("/usr/lib/systemd/user/org.freedesktop.IBus.session.GNOME.service").is_file(),
+                         "requires Ubuntu's IBus units and systemd-analyze")
+    def test_ibus_units_load_in_either_order(self):
+        units = self.home / "units"
+        units.mkdir()
+        generic = "org.freedesktop.IBus.session.generic.service"
+        gnome = "org.freedesktop.IBus.session.GNOME.service"
+        shutil.copy(REPO / lixx.PROFILE / "tree/home/.config/systemd/user" / generic, units)
+        shutil.copy(Path("/usr/lib/systemd/user") / gnome, units)
+        shutil.copytree(REPO / "targets/all/trees/home/.config/systemd/user" / (generic + ".d"),
+                        units / (generic + ".d"))
+        env = {**os.environ, "SYSTEMD_UNIT_PATH": f"{units}:", "XDG_RUNTIME_DIR": str(self.home)}
+        for order in ((generic, gnome), (gnome, generic)):
+            result = subprocess.run(["systemd-analyze", "--user", "--generators=no", "--man=no",
+                                     "verify", *order], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_home_overlay_merges_directories_and_reviews_only_the_winner(self):
         config = Path("home/.config/example")
@@ -305,13 +374,14 @@ class SystemInstallTests(unittest.TestCase):
         completed = []
         with self.assertRaises(subprocess.CalledProcessError):
             lixx.install(completed)
-        self.assertEqual(completed, [self.pref])
+        self.assertEqual(completed, [self.pref, self.editor_pref, self.editor_source])
         self.assertFalse(self.source.exists())
         self.assertFalse(self.home_file.exists())
         self.assertFalse(any("satisfy" in call for call in self.apt_calls()))
         del os.environ["TEST_FAIL"]
         lixx.install(completed)
-        self.assertEqual(completed, [self.pref, self.polkit_dropin, self.home_file])
+        self.assertEqual(completed, [self.pref, self.editor_pref, self.editor_source,
+                                     self.polkit_dropin, self.home_file])
 
     def test_unsupported_system_or_root_stops_before_staging(self):
         for release, uid in (({"ID": "debian", "VERSION_ID": "13"}, 1000),
